@@ -80,6 +80,4 @@ pkgs.stdenv.mkDerivation {
     make install_sw install_ssldirs
     runHook postInstall
   '';
-
-  __noChroot = true;
 }
