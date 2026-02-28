@@ -16,8 +16,8 @@ let
     owner = "google";
     repo = "swiftshader";
     rev = "3d536c0fc62b1cdea0f78c3c38d79be559855b88"; # Latest commit from nixpkgs
-    hash = "sha256-8GcDyN+t6bUG0TfxdT++MBL3W5JShrn7CabROIqfXm4="; # With submodules (glslang, googletest)
-    fetchSubmodules = true; # SwiftShader requires glslang and googletest submodules
+    leaveDotGit = true;
+    fetchSubmodules = false; # We selectively checkout to avoid llvm-project out-of-space error
   };
 in
 pkgs.stdenv.mkDerivation {
@@ -50,6 +50,8 @@ pkgs.stdenv.mkDerivation {
     pkg-config
     ninja
     python3
+    git
+    cacert
   ];
   buildInputs = [ ];
   preConfigure = ''
@@ -63,10 +65,10 @@ pkgs.stdenv.mkDerivation {
     fi
     export ANDROID_TOOLCHAIN_FILE
 
-    # Initialize git submodules (SwiftShader uses googletest submodule)
-    # Note: In Nix sandbox, git might not work, so we handle this gracefully
+    # Initialize specific git submodules required for Vulkan ICD (skip llvm-project)
     if [ -d .git ]; then
-      git submodule update --init --recursive || echo "Warning: Could not initialize submodules (may be OK in Nix sandbox)"
+      echo "Fetching required submodules..."
+      git submodule update --init third_party/glslang third_party/googletest third_party/marl || true
     fi
   '';
   configurePhase = ''
