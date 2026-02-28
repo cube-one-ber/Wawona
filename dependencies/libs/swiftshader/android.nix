@@ -21,24 +21,34 @@ let
   };
 
   # Manually fetch required submodules to avoid huge git clones
-  glslangSrc = pkgs.fetchzip {
-    url = "https://github.com/KhronosGroup/glslang/archive/12713f021ad5ac39c44569c733606ef664fd60a5.zip"; # from SwiftShader/third_party/glslang
+  glslangSrc = pkgs.fetchFromGitHub {
+    owner = "KhronosGroup";
+    repo = "glslang";
+    rev = "12713f021ad5ac39c44569c733606ef664fd60a5"; # from SwiftShader/third_party/glslang
     hash = "sha256-4+FvF7IEY3M4IqXb6A5oXUfV+vP6uN94P5P01A6QvJc=";
   };
-  googletestSrc = pkgs.fetchzip {
-    url = "https://github.com/google/googletest/archive/b796f7d44681514f58a683a3a718a76043d81b83.zip"; # from SwiftShader/third_party/googletest
+  googletestSrc = pkgs.fetchFromGitHub {
+    owner = "google";
+    repo = "googletest";
+    rev = "b796f7d44681514f58a683a3a718a76043d81b83"; # from SwiftShader/third_party/googletest
     hash = "sha256-J0/w7Vv1v0w/jHn7q/lM6pY1p4Q6Z5X049n/qN5Xy4A=";
   };
-  marlSrc = pkgs.fetchzip {
-    url = "https://github.com/google/marl/archive/eb0d0354148e67823e25fed63ef5cc4f4eb04cca.zip"; # from SwiftShader/third_party/marl
+  marlSrc = pkgs.fetchFromGitHub {
+    owner = "google";
+    repo = "marl";
+    rev = "eb0d0354148e67823e25fed63ef5cc4f4eb04cca"; # from SwiftShader/third_party/marl
     hash = "sha256-V/Ue8n/0D/K97D+s1WbB/yB93Q2Y7n60w27E2O3m7wI=";
   };
-  spirvHeadersSrc = pkgs.fetchzip {
-    url = "https://github.com/KhronosGroup/SPIRV-Headers/archive/557d071b782b7fe23fcc5c1aa7eebbcad778ffec.zip"; # from SwiftShader/third_party/SPIRV-Headers
+  spirvHeadersSrc = pkgs.fetchFromGitHub {
+    owner = "KhronosGroup";
+    repo = "SPIRV-Headers";
+    rev = "557d071b782b7fe23fcc5c1aa7eebbcad778ffec"; # from SwiftShader/third_party/SPIRV-Headers
     hash = "sha256-23Vp+pYQ4c68Bf2pPqZ1M6+084xM75H4hA5uS2S1KMI=";
   };
-  spirvToolsSrc = pkgs.fetchzip {
-    url = "https://github.com/KhronosGroup/SPIRV-Tools/archive/2205566f108f90dd0f13f17c2fbee59be1f6ce6a.zip"; # from SwiftShader/third_party/SPIRV-Tools
+  spirvToolsSrc = pkgs.fetchFromGitHub {
+    owner = "KhronosGroup";
+    repo = "SPIRV-Tools";
+    rev = "2205566f108f90dd0f13f17c2fbee59be1f6ce6a"; # from SwiftShader/third_party/SPIRV-Tools
     hash = "sha256-gRz/wX0L5O5B9Q+b5l5gZp4T4OQx32x70Z6q6wV482I=";
   };
 in
