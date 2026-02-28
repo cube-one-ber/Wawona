@@ -103,8 +103,10 @@ let
   cargoTargetUnderscore = builtins.replaceStrings ["-"] ["_"] (if cargoTarget != null then cargoTarget else "");
 
   toolchainOverrides = {
-    cargo = if pkgs ? rustToolchain then pkgs.rustToolchain else pkgs.cargo;
-    rustc = if pkgs ? rustToolchain then pkgs.rustToolchain else pkgs.rustc;
+    cargo = if platform == "android" && pkgs ? rustToolchainAndroid then pkgs.rustToolchainAndroid
+            else if pkgs ? rustToolchain then pkgs.rustToolchain else pkgs.cargo;
+    rustc = if platform == "android" && pkgs ? rustToolchainAndroid then pkgs.rustToolchainAndroid
+            else if pkgs ? rustToolchain then pkgs.rustToolchain else pkgs.rustc;
   };
 
   # Host buildRustCrate: compiles for macOS (build scripts, proc-macros)
