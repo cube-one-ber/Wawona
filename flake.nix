@@ -472,6 +472,7 @@
       systemPackages = allPackages.${system};
       appPrograms = import ./dependencies/wawona/app-programs.nix {
         inherit pkgs systemPackages;
+        xcodeUtils = import ./dependencies/utils/xcode-wrapper.nix { inherit (pkgs) lib pkgs; };
       };
       cleanPkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
       

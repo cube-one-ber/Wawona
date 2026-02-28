@@ -1,4 +1,4 @@
-{ pkgs, systemPackages }:
+{ pkgs, systemPackages, xcodeUtils }:
 
 {
   wawonaIos = "${pkgs.writeShellScriptBin "wawona-ios" ''
@@ -22,7 +22,11 @@
     fi
     xcrun simctl boot "$SIM_UDID" 2>/dev/null || true
     xcrun simctl bootstatus "$SIM_UDID" -b 2>/dev/null || true
-    open -a Simulator 2>/dev/null || true
+    
+    SIM_APP_PATH=$(${xcodeUtils.findSimulatorScript}/bin/find-simulator)
+    echo "Opening $SIM_APP_PATH..."
+    open "$SIM_APP_PATH" 2>/dev/null || true
+    
     echo "Installing Wawona.app to simulator..."
     TMP_APP_ROOT="/tmp/wawona-ios-install"
     STAGED_APP="$TMP_APP_ROOT/Wawona.app"

@@ -70,6 +70,24 @@ let
   '';
 
   # ---------------------------------------------------------------------------
+  # find-simulator
+  # ---------------------------------------------------------------------------
+  # Finds the absolute path to Simulator.app within Xcode.
+  # ---------------------------------------------------------------------------
+  findSimulatorScript = pkgs.writeShellScriptBin "find-simulator" ''
+    #!/usr/bin/env bash
+    set -euo pipefail
+    XCODE_APP=$(${findXcodeScript}/bin/find-xcode)
+    SIM_APP="$XCODE_APP/Contents/Developer/Applications/Simulator.app"
+    if [ -d "$SIM_APP" ]; then
+      echo "$SIM_APP"
+    else
+      echo "ERROR: Simulator.app not found at $SIM_APP" >&2
+      exit 1
+    fi
+  '';
+
+  # ---------------------------------------------------------------------------
   # ensure-ios-sim-sdk
   # ---------------------------------------------------------------------------
   # Ensures the iOS Simulator SDK is present on this machine and prints its
@@ -162,7 +180,7 @@ let
   '';
 in
 {
-  inherit findXcodeScript getXcodePath ensureIosSimSDK;
+  inherit findXcodeScript getXcodePath findSimulatorScript ensureIosSimSDK;
 
   # Wrapper that sets up Xcode environment for commands (e.g. xcodegen).
   xcodeWrapper = pkgs.writeShellScriptBin "xcode-wrapper" ''

@@ -166,7 +166,10 @@ if [ -z "$SIM_UDID" ]; then
 fi
 
 xcrun simctl boot "$SIM_UDID" 2>/dev/null || true
-open -a Simulator 2>/dev/null || true
+# Launch Simulator app 
+SIM_APP_PATH=$(${xcodeUtils.findSimulatorScript}/bin/find-simulator)
+echo "Opening $SIM_APP_PATH..."
+open "$SIM_APP_PATH" 2>/dev/null || true
 echo "Installing Vulkan CTS (deqp.app) to simulator..."
 xcrun simctl install "$SIM_UDID" "$APP_PATH"
 echo "Launching Vulkan CTS..."

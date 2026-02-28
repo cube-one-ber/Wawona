@@ -917,7 +917,10 @@ PLIST_EOF
 
       echo "Simulator UDID: $SIM_UDID"
       xcrun simctl boot "$SIM_UDID" 2>/dev/null || true
-      open -a Simulator
+      # Launch Simulator app
+      SIM_APP_PATH=$(${xcodeUtils.findSimulatorScript}/bin/find-simulator)
+      echo "Opening $SIM_APP_PATH..."
+      open "$SIM_APP_PATH"
 
       echo "Building for iOS Simulator (real Rust core backend)..."
       if ! xcodebuild -scheme Wawona-iOS \
