@@ -504,6 +504,10 @@
         };
         
       } // (pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+        provision-xcode = {
+          type = "app";
+          program = "${import ./dependencies/utils/xcode-wrapper.nix { inherit (pkgs) lib pkgs; }.provisionXcodeScript}/bin/provision-xcode";
+        };
         # Run Nix-built iOS app in simulator (avoids recursion from automationScript -> xcodegen)
         wawona-ios = {
           type = "app";

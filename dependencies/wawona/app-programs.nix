@@ -12,8 +12,17 @@
     DEV_TYPE="com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"
     RUNTIME=$(xcrun simctl list runtimes 2>/dev/null | grep -i "iOS" | grep -v "unavailable" | awk '{print $NF}' | tail -1)
     if [ -z "$RUNTIME" ]; then
-      echo "Error: No iOS runtime found. Install Xcode and an iOS simulator runtime."
-      exit 1
+      echo "No iOS simulator runtime found. Attempting to provision Xcode automatically..."
+      ${xcodeUtils.provisionXcodeScript}/bin/provision-xcode || {
+        echo "Error: Failed to provision Xcode. Please open Xcode and install the iOS platform manually or run: sudo xcodebuild -downloadPlatform iOS"
+        exit 1
+      }
+      # Re-check runtime after provisioning
+      RUNTIME=$(xcrun simctl list runtimes 2>/dev/null | grep -i "iOS" | grep -v "unavailable" | awk '{print $NF}' | tail -1)
+      if [ -z "$RUNTIME" ]; then
+        echo "Error: Provisioning finished but no iOS runtime was found. You may need to manually download it in Xcode -> Settings -> Platforms."
+        exit 1
+      fi
     fi
     SIM_UDID=$(xcrun simctl list devices 2>/dev/null | grep "$SIM_NAME" | grep -v "unavailable" | grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' | head -1)
     if [ -z "$SIM_UDID" ]; then

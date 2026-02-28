@@ -178,9 +178,46 @@ let
     echo "[ensure-ios-sim-sdk] ERROR: SDK still not found after download." >&2
     exit 1
   '';
+
+  # ---------------------------------------------------------------------------
+  # provision-xcode
+  # ---------------------------------------------------------------------------
+  # Handles license acceptance, first-launch, and platform downloading.
+  # This usually requires sudo for the license and first-launch parts.
+  # ---------------------------------------------------------------------------
+  provisionXcodeScript = pkgs.writeShellScriptBin "provision-xcode" ''
+    #!/usr/bin/env bash
+    set -euo pipefail
+    
+    XCODE_APP=$(${findXcodeScript}/bin/find-xcode)
+    XCODEBUILD="$XCODE_APP/Contents/Developer/usr/bin/xcodebuild"
+    
+    echo "[provision-xcode] Provisioning Xcode at $XCODE_APP..."
+    
+    # 1. License
+    if ! "$XCODEBUILD" -license check 2>/dev/null; then
+      echo "[provision-xcode] Xcode license not accepted. Accepting now (requires sudo)..."
+      sudo "$XCODEBUILD" -license accept || {
+        echo "[provision-xcode] ERROR: Failed to accept license." >&2
+        exit 1
+      }
+    else
+      echo "[provision-xcode] Xcode license already accepted."
+    fi
+    
+    # 2. First Launch Experience
+    echo "[provision-xcode] Ensuring First Launch Experience is complete (requires sudo)..."
+    sudo "$XCODEBUILD" -runFirstLaunchExperience || true
+    
+    # 3. Platform (iOS)
+    echo "[provision-xcode] Ensuring iOS Simulator platform is installed..."
+    ${ensureIosSimSDK}/bin/ensure-ios-sim-sdk >/dev/null
+    
+    echo "[provision-xcode] SUCCESS: Xcode is provisioned for iOS development."
+  '';
 in
 {
-  inherit findXcodeScript getXcodePath findSimulatorScript ensureIosSimSDK;
+  inherit findXcodeScript getXcodePath findSimulatorScript ensureIosSimSDK provisionXcodeScript;
 
   # Wrapper that sets up Xcode environment for commands (e.g. xcodegen).
   xcodeWrapper = pkgs.writeShellScriptBin "xcode-wrapper" ''
