@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 # Make source files writable for patching
 chmod -R u+w src/ || true
