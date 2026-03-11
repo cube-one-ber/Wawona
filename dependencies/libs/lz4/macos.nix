@@ -6,6 +6,7 @@
 }:
 
 let
+  xcodeUtils = import ../../../utils/xcode-wrapper.nix { inherit lib pkgs; };
   # lz4 source - fetch from GitHub
   src = pkgs.fetchFromGitHub {
     owner = "lz4";

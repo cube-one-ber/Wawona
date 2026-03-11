@@ -19,6 +19,7 @@
 }:
 
 let
+  xcodeUtils = import ../../../utils/xcode-wrapper.nix { inherit lib pkgs; };
   fetchSource = common.fetchSource;
   waypipeSource = {
     source = "gitlab";

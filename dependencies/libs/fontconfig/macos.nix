@@ -8,6 +8,7 @@
 }:
 
 let
+  xcodeUtils = import ../../../utils/xcode-wrapper.nix { inherit lib pkgs; };
   freetype = if buildModule != null 
     then buildModule.buildForMacOS "freetype" {} 
     else pkgs.freetype;
@@ -43,7 +44,7 @@ pkgs.stdenv.mkDerivation rec {
   preConfigure = ''
     # Fallback if preferred SDK path doesn't exist
     if [ ! -d "$MACOS_SDK" ]; then
-      MACOS_SDK=$(${pkgs.xcode-wrapper}/bin/xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+      MACOS_SDK=$(${xcodeUtils.findXcodeScript}/bin/find-xcode)/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
     fi
     export SDKROOT="$MACOS_SDK"
     export MACOSX_DEPLOYMENT_TARGET="26.0"

@@ -5,6 +5,7 @@
 }:
 
 let
+  xcodeUtils = import ../../../utils/xcode-wrapper.nix { inherit lib pkgs; };
   fetchSource = common.fetchSource;
   expatSource = {
     source = "github";
@@ -30,9 +31,9 @@ pkgs.stdenv.mkDerivation {
     if [ -d expat ]; then
       cd expat
     fi
-    MACOS_SDK = "/System/Library/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
+    MACOS_SDK="/System/Library/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     if [ ! -d "$MACOS_SDK" ]; then
-       MACOS_SDK=$(${pkgs.xcode-wrapper}/bin/xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+       MACOS_SDK=$(${xcodeUtils.findXcodeScript}/bin/find-xcode)/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
     fi
     export SDKROOT="$MACOS_SDK"
     export MACOSX_DEPLOYMENT_TARGET="26.0"
