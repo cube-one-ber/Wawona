@@ -38,6 +38,8 @@ pkgs.stdenv.mkDerivation {
     export NIX_LDFLAGS=""
     export CFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 -fPIC $CFLAGS"
     export LDFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 $LDFLAGS"
+
+    cmakeFlagsArray+=("-DCMAKE_OSX_ARCHITECTURES=arm64" "-DCMAKE_OSX_DEPLOYMENT_TARGET=26.0" "-DCMAKE_OSX_SYSROOT=$SDKROOT")
   '';
 
   # lz4 has CMakeLists.txt in build/cmake subdirectory
@@ -46,9 +48,6 @@ pkgs.stdenv.mkDerivation {
   cmakeFlags = [
     "-DBUILD_SHARED_LIBS=ON"
     "-DBUILD_STATIC_LIBS=ON"
-    "-DCMAKE_OSX_ARCHITECTURES=arm64"
-    "-DCMAKE_OSX_DEPLOYMENT_TARGET=26.0"
-    "-DCMAKE_OSX_SYSROOT=$SDKROOT"
   ];
 
 }

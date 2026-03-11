@@ -38,6 +38,8 @@ pkgs.stdenv.mkDerivation {
     export NIX_LDFLAGS=""
     export CFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 -fPIC $CFLAGS"
     export LDFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 $LDFLAGS"
+    
+    cmakeFlagsArray+=("-DCMAKE_OSX_ARCHITECTURES=arm64" "-DCMAKE_OSX_DEPLOYMENT_TARGET=26.0" "-DCMAKE_OSX_SYSROOT=$SDKROOT")
   '';
 
   # zstd has CMakeLists.txt in build/cmake subdirectory
@@ -47,9 +49,6 @@ pkgs.stdenv.mkDerivation {
     "-DZSTD_BUILD_PROGRAMS=OFF"
     "-DZSTD_BUILD_SHARED=ON"
     "-DZSTD_BUILD_STATIC=ON"
-    "-DCMAKE_OSX_ARCHITECTURES=arm64"
-    "-DCMAKE_OSX_DEPLOYMENT_TARGET=26.0"
-    "-DCMAKE_OSX_SYSROOT=$SDKROOT"
   ];
 
 }

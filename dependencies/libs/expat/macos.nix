@@ -42,9 +42,8 @@ pkgs.stdenv.mkDerivation {
     export NIX_LDFLAGS=""
     export CFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 -fPIC $CFLAGS"
     export LDFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 $LDFLAGS"
+    
+    cmakeFlagsArray+=("-DCMAKE_OSX_SYSROOT=$SDKROOT" "-DCMAKE_OSX_DEPLOYMENT_TARGET=26.0")
   '';
-  cmakeFlags = buildFlags ++ [
-    "-DCMAKE_OSX_SYSROOT=$SDKROOT"
-    "-DCMAKE_OSX_DEPLOYMENT_TARGET=26.0"
-  ];
+  cmakeFlags = buildFlags;
 }

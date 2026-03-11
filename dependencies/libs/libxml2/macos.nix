@@ -38,6 +38,7 @@ stdenv.mkDerivation rec {
   enableStatic = !enableShared;
 
   strictDeps = true;
+  __noChroot = true;
 
   nativeBuildInputs = [
     pkg-config
@@ -72,7 +73,7 @@ stdenv.mkDerivation rec {
   preConfigure = ''
     MACOS_SDK="/System/Library/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     if [ ! -d "$MACOS_SDK" ]; then
-      MACOS_SDK=$(xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+      MACOS_SDK=$(/usr/bin/xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
     fi
     export SDKROOT="$MACOS_SDK"
     export MACOSX_DEPLOYMENT_TARGET="26.0"

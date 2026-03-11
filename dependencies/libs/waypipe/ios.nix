@@ -169,14 +169,8 @@ myRustPlatform.buildRustPackage {
     '' else ""}
 
     # Use target-specific variables so host builds (build-dependencies) use the Nix SDK
-    export "CC_$IOS_TARGET"="$XCODE_CLANG"
-    export "CXX_$IOS_TARGET"="$XCODE_CLANGXX"
-    # Note: Use ''${VAR//pattern/replacement} to escape Nix interpolation
-    export "CARGO_TARGET_''${IOS_TARGET//-/_}_LINKER"="$XCODE_CLANG"
-    
-    # Target-specific RUSTFLAGS
-    export "RUSTFLAGS_$IOS_TARGET"="-C linker=$XCODE_CLANG -C link-arg=-arch -C link-arg=$IOS_ARCH -C link-arg=-isysroot -C link-arg=$SDKROOT -C link-arg=-m${if simulator then "ios-simulator" else "iphoneos"}-version-min=26.0"
-    
+    # .cargo/config.toml will handle the target build.
+
     # Clean up environment for host tools: CC/LDFLAGS/SDKROOT are NOT desired for build.rs!
     # Target-specific variables (above) and .cargo/config.toml will handle the target build.
     unset SDKROOT
