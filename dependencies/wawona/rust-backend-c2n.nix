@@ -221,15 +221,11 @@ let
 
       export CC_${cargoTargetUnderscore}="${rawClang} -target ${linkerTarget} -isysroot $SDKROOT"
       export CFLAGS_${cargoTargetUnderscore}="-target ${linkerTarget} -isysroot $SDKROOT -fPIC"
-      
-      # Explicitly set AR and ARFLAGS for cc-rs when cross-compiling (fixes libz-sys/libssh2-sys)
-      export AR_${cargoTargetUnderscore}="/usr/bin/ar"
-      export ARFLAGS_${cargoTargetUnderscore}="crs"
-      
       export CRATE_CC_NO_DEFAULTS="1"
 
-      # Unset SDKROOT to prevent leakage into host-side build scripts/proc-macros
-      unset SDKROOT
+      # Reset SDKROOT to macOS SDK so host-side build scripts (build.rs) and proc-macros 
+      # can link successfully using the host clang wrapper.
+      export SDKROOT="$DEVELOPER_DIR/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     '' else if isAndroid then ''
       unset MACOSX_DEPLOYMENT_TARGET
       export CC_${cargoTargetUnderscore}="${androidToolchain.androidCC} --target=${androidToolchain.androidTarget}"
