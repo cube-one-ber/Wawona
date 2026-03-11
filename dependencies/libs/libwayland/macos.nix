@@ -117,6 +117,12 @@ pkgs.stdenv.mkDerivation {
             echo "$COMMON_DEFINES" | cat - "$f" > "$f.tmp" && mv "$f.tmp" "$f"
           fi
         done
+
+        # Patch meson.build: librt does not exist on macOS (it's part of libSystem).
+        # Make it optional so the build doesn't fail.
+        if [ -f meson.build ]; then
+          sed -i'' -e "s|find_library('rt')|find_library('rt', required: false)|g" meson.build
+        fi
         
         if [ -f src/wayland-os.c ]; then
           # Replace the #error directive with macOS implementation for get_credentials
@@ -144,23 +150,13 @@ pkgs.stdenv.mkDerivation {
   '';
 
   preConfigure = ''
-    if [ -z "''${XCODE_APP:-}" ]; then
-      XCODE_APP=$(${xcodeUtils.findXcodeScript}/bin/find-xcode || true)
-      if [ -n "$XCODE_APP" ]; then
-        export XCODE_APP
-        export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
-        export PATH="$DEVELOPER_DIR/usr/bin:$PATH"
-        export SDKROOT="$DEVELOPER_DIR/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
-      fi
-    fi
-
     # Add epoll-shim include path so sys/epoll.h, sys/signalfd.h, etc. are found.
     # epoll-shim puts headers in include/libepoll-shim/sys/*.h, so we add include/libepoll-shim
     # to the search path so that <sys/epoll.h> resolves correctly.
-    export CFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 -fPIC $CFLAGS -I${epollShim}/include/libepoll-shim"
+    export CFLAGS="-fPIC $CFLAGS -I${epollShim}/include/libepoll-shim"
 
     # Link against epoll-shim
-    export LDFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 $LDFLAGS -lepoll-shim"
+    export LDFLAGS="$LDFLAGS -lepoll-shim"
   '';
 
   configurePhase = ''
