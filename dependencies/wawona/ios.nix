@@ -9,6 +9,7 @@
   rustBackendSim ? null,
   weston,
   targetPkgs,
+  simulator ? true,
   ...
 }:
 
@@ -356,6 +357,13 @@ in
         echo "ERROR: Xcode toolchain not found at $DEVELOPER_DIR"
         exit 1
       fi
+      # Determine architecture for simulator
+      IOS_ARCH="arm64"
+      if [ "$(uname -m)" = "x86_64" ]; then
+        IOS_ARCH="x86_64"
+      fi
+      export CC="$IOS_CC"
+      export CXX="$IOS_CXX"
       export CFLAGS="-arch $IOS_ARCH -isysroot $SDKROOT -m${if simulator then "ios-simulator" else "iphoneos"}-version-min=26.0 -fPIC"
       export CXXFLAGS="-arch $IOS_ARCH -isysroot $SDKROOT -m${if simulator then "ios-simulator" else "iphoneos"}-version-min=26.0 -fPIC"
       export LDFLAGS="-arch $IOS_ARCH -isysroot $SDKROOT -m${if simulator then "ios-simulator" else "iphoneos"}-version-min=26.0 -lobjc"
