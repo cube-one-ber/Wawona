@@ -185,8 +185,13 @@ EOF
     export SDKROOT="$MACOS_SDK"
     export MACOSX_DEPLOYMENT_TARGET="26.0"
 
-    # export NIX_CFLAGS_COMPILE=""
-    # export NIX_LDFLAGS=""
+    # Isolate environment from Nix wrapper flags to prevent linker conflicts
+    unset DEVELOPER_DIR
+    export NIX_CFLAGS_COMPILE=""
+    export NIX_LDFLAGS=""
+
+    export CC="${pkgs.clang}/bin/clang"
+    export CXX="${pkgs.clang}/bin/clang++"
     
     # Add threads_compat to include path for C11 threads compatibility
     export CFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 -fPIC -I$(pwd)/threads_compat $CFLAGS"

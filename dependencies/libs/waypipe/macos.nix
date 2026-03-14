@@ -2303,12 +2303,13 @@ RUST_EOF
     export MACOSX_DEPLOYMENT_TARGET="26.0"
     
     # Isolate environment from Nix wrapper flags to prevent linker conflicts
-    # export NIX_CFLAGS_COMPILE=""
-    # export NIX_LDFLAGS=""
+    unset DEVELOPER_DIR
+    export NIX_CFLAGS_COMPILE=""
+    export NIX_LDFLAGS=""
     export CFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 -fPIC $CFLAGS"
     export LDFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 $LDFLAGS"
 
-    export LIBRARY_PATH="${libwayland}/lib:${zstd}/lib:${lz4}/lib:$LIBRARY_PATH"
+    export LIBRARY_PATH="${libwayland}/lib:${zstd}/lib:${lz4}/lib:${pkgs.libiconv}/lib:$LIBRARY_PATH"
     export RUSTFLAGS="-A warnings $RUSTFLAGS"
     export PKG_CONFIG_PATH="${libwayland}/lib/pkgconfig:${zstd}/lib/pkgconfig:${lz4}/lib/pkgconfig:$PKG_CONFIG_PATH"
     export C_INCLUDE_PATH="${zstd}/include:${lz4}/include:$C_INCLUDE_PATH"

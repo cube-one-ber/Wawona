@@ -163,10 +163,12 @@ pkgs.stdenv.mkDerivation {
     export MACOSX_DEPLOYMENT_TARGET="26.0"
 
     # Isolate environment from Nix wrapper flags to prevent linker conflicts
+    unset DEVELOPER_DIR
+    export NIX_CFLAGS_COMPILE=""
+    export NIX_LDFLAGS=""
+
     export CC="${pkgs.clang}/bin/clang"
     export CXX="${pkgs.clang}/bin/clang++"
-    # export NIX_CFLAGS_COMPILE=""
-    # export NIX_LDFLAGS=""
 
     # Add sysroot and version-min explicitly
     export CFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 -fPIC $CFLAGS -I${epollShim}/include/libepoll-shim"

@@ -240,6 +240,7 @@
         mainPackage = if pkgs.stdenv.isDarwin then null else pkgs.hello;
 
         packagesForSystem = {
+          nom = pkgs.nix-output-monitor;
           default = mainPackage;
           wawona = mainPackage;
           wawona-android = wawona-android;
@@ -378,6 +379,7 @@
             weston = toolchains.buildForIOS "weston" { simulator = true; };
             rustBackend = backend-ios;
             rustBackendSim = backend-ios-sim;
+            xcodeProject = xcodegenProject;
           };
 
 
@@ -388,6 +390,7 @@
             waypipe = waypipe-macos;
             weston = weston;
             rustBackend = backend-macos;
+            xcodeProject = xcodegenProject;
           };
 
           # Keyboard test client wrapper
@@ -426,6 +429,18 @@
             vulkanCtsIos = vulkanCtsIOS;
             graphicsSmoke = graphicsSmokeMacOS;
           };
+          # ── Xcode Project Generation ──
+          xcodegenOutputs = pkgs.callPackage ./dependencies/generators/xcodegen.nix {
+             inherit wawonaVersion wawonaSrc;
+             buildModule = toolchains;
+             targetPkgs = pkgs; # For full project, use host pkgs (macOS)
+             rustPlatform = pkgs.rustPlatform;
+             inherit iosDeps iosSimDeps macosDeps;
+             macosWeston = weston;
+          };
+          xcodegen = xcodegenOutputs.app;
+          xcodegenProject = xcodegenOutputs.project;
+
         in {
           wawona-macos = wawona-macos;
           wawona-macos-backend = backend-macos;
@@ -452,17 +467,9 @@
             paths = [ backend-ios-sim ] ++ builtins.attrValues iosSimDeps;
           };
 
-
-
           # Full Xcode project with both iOS + macOS targets
-          xcodegen = (pkgs.callPackage ./dependencies/generators/xcodegen.nix {
-             inherit wawonaVersion wawonaSrc;
-             buildModule = toolchains;
-             targetPkgs = pkgs; # For full project, use host pkgs (macOS)
-             rustPlatform = pkgs.rustPlatform;
-             inherit iosDeps iosSimDeps macosDeps;
-             macosWeston = weston;
-          }).app;
+          xcodegen = xcodegen;
+          xcodegenProject = xcodegenProject;
           # iOS-only Xcode project (disabled: pkgsCross.iphone64 triggers infinite recursion in nixpkgs)
           # xcodegen-ios = (pkgs.callPackage ./dependencies/generators/xcodegen.nix {
           #   inherit wawonaVersion wawonaSrc;
@@ -547,7 +554,12 @@
       name = system;
       value = {
       } // {
-        provision-android = {
+        nom = {
+          type = "app";
+          program = "${systemPackages.nom}/bin/nom";
+        };
+
+        wawona-android-provision = {
           type = "app";
           program = "${androidUtils.provisionAndroidScript}/bin/provision-android";
         };
@@ -555,6 +567,11 @@
         wawona-android = {
           type = "app";
           program = "${systemPackages.wawona-android}/bin/wawona-android-run";
+        };
+
+        wawona-android-project = {
+          type = "app";
+          program = "${systemPackages.gradlegen}/bin/gradlegen";
         };
 
         vulkan-cts-android = {
@@ -567,7 +584,7 @@
           program = "${systemPackages.gl-cts-android}/bin/gl-cts-android-run";
         };
       } // (pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
-        gradlegen = {
+        wawona-android-project = {
           type = "app";
           program = "${systemPackages.gradlegen}/bin/gradlegen";
         };
@@ -575,6 +592,11 @@
         wawona-macos = {
           type = "app";
           program = "${systemPackages.default}/bin/wawona";
+        };
+
+        wawona-macos-project = {
+          type = "app";
+          program = "${systemPackages.xcodegen}/bin/xcodegen";
         };
 
         foot = {
@@ -614,7 +636,7 @@
 
 
         
-        provision-xcode = {
+        wawona-ios-provision = {
           type = "app";
           program = "${(import ./dependencies/utils/xcode-wrapper.nix { inherit (pkgs) lib pkgs; }).provisionXcodeScript}/bin/provision-xcode";
         };
@@ -625,7 +647,7 @@
           program = appPrograms.wawonaIos;
         };
 
-        xcodegen = {
+        wawona-ios-project = {
           type = "app";
           program = "${systemPackages.xcodegen}/bin/xcodegen";
         };
@@ -665,12 +687,22 @@
       pkgs = pkgsFor system;
       
       linuxShell = pkgs.mkShell {
-        buildInputs = [ pkgs.hello ];
+        buildInputs = [
+          pkgs.hello
+          pkgs.nix-output-monitor
+        ];
+        shellHook = ''
+          echo "nix-output-monitor enabled: use 'nom build', 'nom develop', or aliases 'nb', 'nd', 'ns'."
+          alias nb='nom build'
+          alias nd='nom develop'
+          alias ns='nom shell'
+        '';
       };
 
       darwinShell = pkgs.mkShell {
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [
+          pkgs.nix-output-monitor
           pkgs.rustToolchain
           pkgs.libxkbcommon
           pkgs.libffi
@@ -696,6 +728,11 @@
               export TEAM_ID="$TEAM_ID"
             fi
           fi
+
+          echo "nix-output-monitor enabled: use 'nom build', 'nom develop', or aliases 'nb', 'nd', 'ns'."
+          alias nb='nom build'
+          alias nd='nom develop'
+          alias ns='nom shell'
         '';
       };
     in {

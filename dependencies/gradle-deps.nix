@@ -27,7 +27,7 @@ stdenv.mkDerivation {
 
   outputHashAlgo = "sha256";
   outputHashMode = "recursive";
-  outputHash = "sha256-irH5cmJTpG9Ck10kHyfx0kSdjFQa1WIfqvztg5c3HwM=";
+  outputHash = "sha256-uXbvE7HSB5zKyJExnkYSKqYH+Hvxuy1MsD2pRDqvbEc=";
 
   buildPhase = ''
     export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
@@ -96,12 +96,25 @@ stdenv.mkDerivation {
     rm -rf $out/caches/*/scripts/
     rm -rf $out/caches/*/scripts-remapped/
     rm -rf $out/caches/*/fileHashes/
+    rm -rf $out/caches/*/workerMain/
+    rm -rf $out/caches/*/file-changes/
+    rm -rf $out/caches/*/journal/
+    rm -rf $out/caches/transforms-*/
     rm -rf $out/caches/build-cache-1/
     rm -rf $out/daemon
     rm -rf $out/wrapper
 
     # Remove compiled scripts which capture the init script path
     rm -rf $out/caches/jars-*
+
+    # Remove non-deterministic metadata binaries and volatile caches
+    find $out -name "artifact-at-repository.bin" -delete
+    find $out -name "module-versions.xml" -delete
+    find $out -name "resource-at-url.bin" -delete
+    find $out -name "module-artifacts.bin" -delete
+    find $out -name "module-metadata.bin" -delete
+    rm -rf $out/caches/*/generated-gradle-jars/
+    rm -rf $out/caches/modules-2/metadata-*/
 
     # Remove files containing Nix store paths (references to init scripts etc)
     # We use a loop to avoid xargs issues and handle empty results

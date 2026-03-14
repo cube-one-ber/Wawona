@@ -15,6 +15,7 @@
   waypipeVersion ? "unknown",
   waypipe,
   moltenvk ? pkgs.moltenvk or null,
+  xcodeProject ? null,
 }:
 
 let
@@ -241,6 +242,8 @@ in
     version = projectVersion;
     src = wawonaSrc;
 
+    outputs = [ "out" "project" ];
+
     nativeBuildInputs = with pkgs; [
       clang
       pkg-config
@@ -250,14 +253,14 @@ in
     ];
 
     buildInputs = [
-      pkgs.pixman
+      (buildModule.buildForMacOS "pixman" { })
       pkgs.vulkan-headers
       pkgs.vulkan-loader
-      pkgs.libxkbcommon
+      (buildModule.buildForMacOS "xkbcommon" { })
       pkgs.openssl
       pkgs.zlib
       pkgs.libiconv
-      buildModule.macos.libwayland
+      (buildModule.buildForMacOS "libwayland" { })
       rustBackend
       waypipe
     ];
@@ -393,8 +396,11 @@ POPUP_H
       ${copyDeps "macos-dependencies"}
 
       export PKG_CONFIG_PATH="$PWD/macos-dependencies/libdata/pkgconfig:$PWD/macos-dependencies/lib/pkgconfig:$PKG_CONFIG_PATH"
-      # export NIX_CFLAGS_COMPILE=""
-      # export NIX_LDFLAGS=""
+      
+      # Isolate environment from Nix wrapper flags to prevent linker conflicts
+      unset DEVELOPER_DIR
+      export NIX_CFLAGS_COMPILE=""
+      export NIX_LDFLAGS=""
 
       # Bindgen and other target tools need to know about the sysroot via flags,
       # but we unset the env vars to avoid leaking them into host tools.
@@ -402,7 +408,6 @@ POPUP_H
       export TARGET_LDFLAGS="-isysroot $SDKROOT ${lib.concatStringsSep " " common.appleCFlags}"
 
       unset SDKROOT
-      unset DEVELOPER_DIR
     '';
 
     buildPhase = ''
@@ -550,7 +555,7 @@ GEN_HEADER
       # PHASE 3: Link everything together
       echo "🔗 Phase 3: Linking final binary..."
 
-      XKBCOMMON_LIBS=$(pkg-config --libs libxkbcommon 2>/dev/null || echo "-Lmacos-dependencies/lib -lxkbcommon")
+      XKBCOMMON_LIBS=$(pkg-config --libs xkbcommon 2>/dev/null || echo "-Lmacos-dependencies/lib -lxkbcommon")
       WAYLAND_LIBS=$(pkg-config --libs wayland-client wayland-server 2>/dev/null || echo "-Lmacos-dependencies/lib -lwayland-client -lwayland-server")
       OPENSSL_LIBS=$(pkg-config --libs openssl 2>/dev/null || echo "-Lmacos-dependencies/lib -lssl -lcrypto")
       ZLIB_LIBS=$(pkg-config --libs zlib 2>/dev/null || echo "-Lmacos-dependencies/lib -lz")
@@ -582,6 +587,16 @@ GEN_HEADER
             mkdir -p $out/Applications/Wawona.app/Contents/Resources
             
             cp Wawona $out/Applications/Wawona.app/Contents/MacOS/
+
+            # Populate project output
+            mkdir -p $project
+            # Copy sources (current build dir)
+            cp -r . "$project/"
+            chmod -R u+w $project
+            if [ -n "${toString xcodeProject}" ]; then
+              cp -r ${xcodeProject}/* "$project/"
+              chmod -R u+w $project
+            fi
             
             if command -v codesign >/dev/null 2>&1; then
               echo "Signing Wawona main binary..."

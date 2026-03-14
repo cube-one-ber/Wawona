@@ -88,18 +88,20 @@ pkgs.stdenv.mkDerivation {
   __noChroot = true;
 
   preConfigure = ''
-    if [ -z "''${XCODE_APP:-}" ]; then
-      XCODE_APP=$(${xcodeUtils.findXcodeScript}/bin/find-xcode || true)
-      if [ -n "$XCODE_APP" ]; then
-        export XCODE_APP
-        export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
-        export PATH="$DEVELOPER_DIR/usr/bin:$PATH"
-        export SDKROOT="$DEVELOPER_DIR/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
-      fi
+    MACOS_SDK="/System/Library/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+    if [ ! -d "$MACOS_SDK" ]; then
+      MACOS_SDK=$(${xcodeUtils.findXcodeScript}/bin/find-xcode)/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
     fi
-    
-    # export NIX_CFLAGS_COMPILE=""
-    # export NIX_LDFLAGS=""
+    export SDKROOT="$MACOS_SDK"
+    export MACOSX_DEPLOYMENT_TARGET="26.0"
+
+    # Isolate environment from Nix wrapper flags to prevent linker conflicts
+    unset DEVELOPER_DIR
+    export NIX_CFLAGS_COMPILE=""
+    export NIX_LDFLAGS=""
+
+    export CC="${pkgs.clang}/bin/clang"
+    export CXX="${pkgs.clang}/bin/clang++"
     
     # Add compat headers to include path and link against epoll-shim
     # Explicitly include epoll-shim include dir AFTER compat dir to ensure our overrides work

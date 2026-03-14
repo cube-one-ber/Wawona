@@ -40,11 +40,19 @@ pkgs.stdenv.mkDerivation {
     fi
     export SDKROOT="$MACOS_SDK"
     export MACOSX_DEPLOYMENT_TARGET="26.0"
+
+    # Isolate environment from Nix wrapper flags to prevent linker conflicts
+    # This is critical for targeting futuristic macOS versions where Nix stubs
+    # might not have the correct symbols (like ___error, _open, etc.)
+    unset DEVELOPER_DIR
+    export NIX_CFLAGS_COMPILE=""
+    export NIX_LDFLAGS=""
+
     export CC="${pkgs.clang}/bin/clang"
     export CXX="${pkgs.clang}/bin/clang++"
-    # export NIX_CFLAGS_COMPILE=""
-    # export NIX_LDFLAGS=""
+    
     export CFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 -fPIC $CFLAGS"
+    export CXXFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 -fPIC $CXXFLAGS"
     export LDFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 $LDFLAGS"
     
     cmakeFlagsArray+=("-DCMAKE_OSX_SYSROOT=$SDKROOT" "-DCMAKE_OSX_DEPLOYMENT_TARGET=26.0" "-DEXPAT_BUILD_TESTS=OFF" "-DEXPAT_BUILD_EXAMPLES=OFF")

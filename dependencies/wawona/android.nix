@@ -335,13 +335,15 @@ let
         rm -f "$ANDROID_AVD_HOME/$AVD_NAME.avd/*.lock" 2>/dev/null || true
 
         echo "[Wawona] Starting emulator '$AVD_NAME'..."
-        # Use "double-fork" + setsid + nohup to truly detach.
-        # This completely disconnects the emulator from the script's TTY and session.
-        echo "[Wawona] Detaching emulator process..."
+        # We use setsid (from util-linux) to create a new session leader.
+        # On macOS, we wrap this in a subshell for a "double-fork" to ensure 
+        # it remains attached to the Aqua GUI session while being orphaned from the terminal.
+        echo "[Wawona] Detaching emulator process (setsid + double-fork)..."
         if [ "$USE_SYSTEM_SDK" = "true" ] && [ "$(uname -m)" = "arm64" ]; then
-          ((setsid nohup emulator -avd "$AVD_NAME" -gpu swiftshader_indirect < /dev/null > /tmp/emulator.log 2>&1 &))
+          # On Apple Silicon, host GPU is much faster and more reliable
+          (setsid nohup emulator -avd "$AVD_NAME" -gpu host < /dev/null > /tmp/emulator.log 2>&1 &)
         else
-          ((setsid nohup emulator -avd "$AVD_NAME" -gpu auto < /dev/null > /tmp/emulator.log 2>&1 &))
+          (setsid nohup emulator -avd "$AVD_NAME" -gpu auto < /dev/null > /tmp/emulator.log 2>&1 &)
         fi
       fi
 

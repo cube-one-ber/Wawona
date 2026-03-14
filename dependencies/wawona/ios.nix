@@ -10,6 +10,7 @@
   weston,
   targetPkgs,
   simulator ? true,
+  xcodeProject ? null,
   ...
 }:
 
@@ -218,6 +219,8 @@ in
     name = "wawona-ios";
     version = wawonaVersion; # Changed to wawonaVersion
     src = wawonaSrc;
+
+    outputs = [ "out" "project" ];
 
     dontStrip = true;
     
@@ -675,6 +678,16 @@ in
       cp Wawona $out/Applications/Wawona.app/
       if [ -d Wawona.dSYM ]; then
         cp -R Wawona.dSYM $out/Applications/Wawona.app.dSYM
+      fi
+
+      # Populate project output
+      mkdir -p $project
+      # Copy sources (current build dir)
+      cp -r . "$project/"
+      chmod -R u+w $project
+      if [ -n "${toString xcodeProject}" ]; then
+        cp -r ${xcodeProject}/* "$project/"
+        chmod -R u+w $project
       fi
 
       # Simulator/device install requires an Info.plist with a bundle identifier.

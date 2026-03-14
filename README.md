@@ -24,6 +24,14 @@
 3. Configure your environment (see below).
 4. Build with the Nix flake.
 
+### Build Output Monitor (`nom`)
+
+Wawona's flake includes [`nix-output-monitor`](https://github.com/maralorn/nix-output-monitor) as `.#nom` and in all dev shells.
+
+- Direct use: `nom build .#wawona-macos`
+- Via flake app: `nix run .#nom -- build .#wawona-macos`
+- In `nix develop`: use shortcuts `nb` (`nom build`), `nd` (`nom develop`), and `ns` (`nom shell`)
+
 ### Environment Configuration
 
 This project uses a simple `.envrc` file to manage your Apple Development Team ID.

@@ -46,8 +46,13 @@ pkgs.stdenv.mkDerivation {
     export SDKROOT="$MACOS_SDK"
     export MACOSX_DEPLOYMENT_TARGET="26.0"
     
-    # export NIX_CFLAGS_COMPILE=""
-    # export NIX_LDFLAGS=""
+    # Isolate environment from Nix wrapper flags to prevent linker conflicts
+    export NIX_CFLAGS_COMPILE=""
+    export NIX_LDFLAGS=""
+
+    export CC="${pkgs.clang}/bin/clang"
+    export CXX="${pkgs.clang}/bin/clang++"
+
     export CFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 -fPIC $CFLAGS"
     export LDFLAGS="-isysroot $SDKROOT -mmacosx-version-min=26.0 $LDFLAGS"
   '';
