@@ -52,8 +52,8 @@ let
     options = {
       bundleIdPrefix = "com.aspauldingcode";
       deploymentTarget = {
-        iOS = "26.0";
-        macOS = "26.0";
+        iOS = "16.0";
+        macOS = "14.0";
       };
       generateEmptyDirectories = true;
     };
@@ -89,11 +89,19 @@ let
         ];
       };
     };
+    packages = {
+      WawonaSPM = {
+        path = ".";
+      };
+    };
     targets = {
       Wawona-iOS = {
         type = "application";
         platform = "iOS";
         sources = [
+          { path = "Darwin/Sources"; excludes = commonExcludes; }
+          { path = "Sources/WawonaModel"; excludes = commonExcludes; }
+          { path = "Sources/WawonaUI"; excludes = commonExcludes; }
           {
             path = "src/platform/macos";
             excludes = commonExcludes ++ [
@@ -104,7 +112,6 @@ let
               "ui/**"
             ];
           }
-          { path = "src/platform/macos/main.m"; }
           { path = "src/platform/ios"; excludes = commonExcludes; }
           { path = "src/platform/macos/ui/Machines"; excludes = commonExcludes; }
           { path = "src/platform/macos/ui/Settings"; excludes = commonExcludes; }
@@ -236,6 +243,7 @@ let
           };
         };
         dependencies = [
+          { package = "WawonaSPM"; product = "WawonaUI"; }
           { sdk = "UIKit.framework"; }
           { sdk = "Foundation.framework"; }
           { sdk = "CoreGraphics.framework"; }
@@ -254,7 +262,10 @@ let
         type = "application";
         platform = "macOS";
         sources = [
-          { path = "src/platform/macos"; excludes = commonExcludes; }
+          { path = "Darwin/Sources"; excludes = commonExcludes; }
+          { path = "Sources/WawonaModel"; excludes = commonExcludes; }
+          { path = "Sources/WawonaUI"; excludes = commonExcludes; }
+          { path = "src/platform/macos"; excludes = commonExcludes ++ [ "main.m" ]; }
           { path = "src/platform/macos/ui"; excludes = commonExcludes; }
           { path = "src/resources/Assets.xcassets"; }
           { path = "src/resources/Wawona.icon"; type = "folder"; }
@@ -342,6 +353,7 @@ let
           };
         };
         dependencies = [
+          { package = "WawonaSPM"; product = "WawonaUI"; }
           { sdk = "Cocoa.framework"; }
           { sdk = "Foundation.framework"; }
           { sdk = "CoreGraphics.framework"; }
@@ -356,6 +368,51 @@ let
           { sdk = "Security.framework"; }
           { sdk = "Network.framework"; }
           { sdk = "ColorSync.framework"; }
+        ];
+      };
+      Wawona-iPadOS = {
+        type = "application";
+        platform = "iOS";
+        sources = [
+          { path = "Darwin/Sources"; excludes = commonExcludes; }
+          { path = "Sources/WawonaModel"; excludes = commonExcludes; }
+          { path = "Sources/WawonaUI"; excludes = commonExcludes; }
+          { path = "src/platform/macos"; excludes = commonExcludes ++ [ "ui/**" "*Window*" "*Popup*" "*MacOS*" ]; }
+          { path = "src/platform/ios"; excludes = commonExcludes; }
+        ];
+        settings = {
+          base = {
+            INFOPLIST_FILE = "src/resources/app-bundle/Info.plist";
+            GENERATE_INFOPLIST_FILE = "NO";
+            PRODUCT_BUNDLE_IDENTIFIER = "com.aspauldingcode.Wawona.ipad";
+            TARGETED_DEVICE_FAMILY = "2";
+            UIRequiresFullScreen = "NO";
+            UIApplicationSupportsMultipleScenes = "YES";
+          };
+        };
+        dependencies = [
+          { package = "WawonaSPM"; product = "WawonaUI"; }
+          { sdk = "UIKit.framework"; }
+          { sdk = "Foundation.framework"; }
+          { sdk = "QuartzCore.framework"; }
+          { sdk = "Metal.framework"; }
+        ];
+      };
+      Wawona-watchOS = {
+        type = "application";
+        platform = "watchOS";
+        sources = [
+          { path = "Sources/WawonaModel"; excludes = commonExcludes; }
+          { path = "Sources/WawonaWatch"; excludes = commonExcludes; }
+        ];
+        settings = {
+          base = {
+            PRODUCT_BUNDLE_IDENTIFIER = "com.aspauldingcode.Wawona.watch";
+            WATCHOS_DEPLOYMENT_TARGET = "10.0";
+          };
+        };
+        dependencies = [
+          { package = "WawonaSPM"; product = "WawonaWatch"; }
         ];
       };
     };
@@ -456,6 +513,16 @@ EOF
     <dict>
       <key>orderHint</key>
       <integer>1</integer>
+    </dict>
+    <key>Wawona-iPadOS.xcscheme_^#shared#^_</key>
+    <dict>
+      <key>orderHint</key>
+      <integer>2</integer>
+    </dict>
+    <key>Wawona-watchOS.xcscheme_^#shared#^_</key>
+    <dict>
+      <key>orderHint</key>
+      <integer>3</integer>
     </dict>
   </dict>
   <key>SuppressBuildableAutocreation</key>

@@ -444,6 +444,9 @@
           wawona-ios = wawona-ios-app-sim;
           wawona-ios-app-sim = wawona-ios-app-sim;
           wawona-ios-app-device = wawona-ios-app-device;
+          wawona-ipad = wawona-ios-app-device;
+          wawona-ipad-sim = wawona-ios-app-sim;
+          wawona-watchos = wawona-ios-app-sim;
           wawona-ios-ipa = wawona-ios-ipa;
           wawona-ios-xcarchive = wawona-ios-xcarchive;
           wawona-ios-simulator = wawona-ios-simulator;
@@ -506,7 +509,7 @@
         apple = import ./dependencies/apple { inherit (pkgs) lib pkgs; nixXcodeenvtests = inputs."nix-xcodeenvtests"; };
       in if pkgs.stdenv.isDarwin then (pkgs.mkShell {
         nativeBuildInputs = [ pkgs.pkg-config ];
-        buildInputs = [ pkgs.nix-output-monitor pkgs.rustToolchain pkgs.libxkbcommon pkgs.libffi pkgs.wayland-protocols pkgs.openssl ]
+        buildInputs = [ pkgs.nix-output-monitor pkgs.rustToolchain pkgs.libxkbcommon pkgs.libffi pkgs.wayland-protocols pkgs.openssl pkgs.skip ]
           ++ [ apple.ensureIosSimSDK apple.findXcodeScript ];
         shellHook = "export XDG_RUNTIME_DIR=\"/tmp/wawona-$(id -u)\"; export WAYLAND_DISPLAY=\"wayland-0\"; alias nb='nom build'; alias nd='nom develop';";
       }) else (pkgs.mkShell {

@@ -12,7 +12,7 @@ android {
 
     defaultConfig {
         applicationId = "com.aspauldingcode.wawona"
-        minSdk = 24
+        minSdk = 28
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -106,6 +106,7 @@ dependencies {
     
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("androidx.fragment:fragment-ktx:1.6.2")
+    implementation(files("../../../android/Skip/WawonaUI.aar"))
 }
 
 // Bypassing the AAR metadata check task which fails in the Nix sandbox

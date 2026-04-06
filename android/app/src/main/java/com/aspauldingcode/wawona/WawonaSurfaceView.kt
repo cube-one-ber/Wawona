@@ -46,6 +46,11 @@ class WawonaSurfaceView(context: Context) : SurfaceView(context) {
         isFocusableInTouchMode = true
     }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        WawonaNative.nativeSyncOutputSize(w, h)
+    }
+
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
         val prefs = context.getSharedPreferences("wawona_prefs", Context.MODE_PRIVATE)
         val textAssist = prefs.getBoolean("enableTextAssist", false)

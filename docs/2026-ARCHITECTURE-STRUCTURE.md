@@ -7,6 +7,41 @@
 
 ---
 
+## **2026 UI Overhaul Addendum (Skip Fuse)**
+
+Wawona now introduces a Skip Fuse UI layer for Apple + Android UI parity while keeping the compositor bridge native:
+
+- `Sources/WawonaModel`: shared model/state (`MachineProfile`, `SessionOrchestrator`, `WawonaPreferences`) with `bridging: true`.
+- `Sources/WawonaUI`: SwiftUI UI surfaces (`WelcomeView`, `Machines*`, `Settings*`) compiled for Apple and transformed to Compose for Android.
+- `Sources/WawonaWatch`: watchOS status companion.
+- `Darwin/Sources/Main.swift`: app entrypoint following the Howdy Skip delegation pattern.
+- `src/platform/macos/*` and `android_jni.c` remain the compositor/native bridge seam.
+
+### UI/Runtime data flow
+
+```mermaid
+flowchart LR
+    WawonaModel[WawonaModel]
+    WawonaUI[WawonaUI]
+    AppleBridge[ObjCBridge]
+    AndroidBridge[JNIandSurfaceView]
+    RustCore[RustCore]
+
+    WawonaModel --> WawonaUI
+    WawonaUI --> AppleBridge
+    WawonaUI --> AndroidBridge
+    AppleBridge --> RustCore
+    AndroidBridge --> RustCore
+```
+
+### Compatibility tiers
+
+- Baseline: iOS 16+, macOS 14+, Android API 28+, watchOS 10+.
+- Liquid Glass: iOS 26+/macOS 26+ behind `@available` checks.
+- Multi-window: iPadOS 17+ and Android API 36+ (additive).
+
+---
+
 ## **1. Annotated Project Layout**
 
 ### Current Layout (as-built)

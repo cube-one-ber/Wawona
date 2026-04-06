@@ -13,6 +13,39 @@ rec {
   # macOS-only files (WWNWindow*, WWNMacOS*, WWNPopupHost*) live in macos.nix.
   # iOS-only files (WWNCompositorView_ios*, WWNSceneDelegate*) live in ios.nix.
   commonSources = [
+    # New Skip SwiftPM sources
+    "Darwin/Sources/Main.swift"
+    "Sources/WawonaModel/ClientLauncher.swift"
+    "Sources/WawonaModel/MachineProfile.swift"
+    "Sources/WawonaModel/SessionOrchestrator.swift"
+    "Sources/WawonaModel/WawonaPreferences.swift"
+    "Sources/WawonaUI/WawonaApp.swift"
+    "Sources/WawonaUI/CompositorBridge.swift"
+    "Sources/WawonaUI/WelcomeView.swift"
+    "Sources/WawonaUI/ContentView.swift"
+    "Sources/WawonaUI/Components/AdaptiveNavigationView.swift"
+    "Sources/WawonaUI/Components/GlassCard.swift"
+    "Sources/WawonaUI/Components/SectionHeader.swift"
+    "Sources/WawonaUI/Components/StatusBadge.swift"
+    "Sources/WawonaUI/Machines/MachinesRootView.swift"
+    "Sources/WawonaUI/Machines/MachinesGridView.swift"
+    "Sources/WawonaUI/Machines/MachineCardView.swift"
+    "Sources/WawonaUI/Machines/MachineEditorView.swift"
+    "Sources/WawonaUI/Machines/MachineDetailView.swift"
+    "Sources/WawonaUI/Settings/SettingsRootView.swift"
+    "Sources/WawonaUI/Settings/DisplaySettingsView.swift"
+    "Sources/WawonaUI/Settings/InputSettingsView.swift"
+    "Sources/WawonaUI/Settings/GraphicsSettingsView.swift"
+    "Sources/WawonaUI/Settings/ConnectionSettingsView.swift"
+    "Sources/WawonaUI/Settings/SSHWaypipeSettingsView.swift"
+    "Sources/WawonaUI/Settings/ClientsSettingsView.swift"
+    "Sources/WawonaUI/Settings/AdvancedSettingsView.swift"
+    "Sources/WawonaUI/Settings/AboutView.swift"
+    "Sources/WawonaUI/Settings/DependenciesView.swift"
+    "Sources/WawonaWatch/WawonaWatchApp.swift"
+    "Sources/WawonaWatch/MachineStatusView.swift"
+    "Sources/WawonaWatch/QuickConnectView.swift"
+    "Sources/WawonaWatch/SessionGlanceView.swift"
     # Platform bridge (shared between macOS and iOS)
     "src/platform/macos/main.m"
     "src/platform/macos/WWNCompositorBridge.m"
@@ -102,7 +135,7 @@ rec {
   ];
 
   # Apple-only deployment target flag (not valid for Android)
-  appleCFlags = [ "-mmacosx-version-min=26.0" ];
+  appleCFlags = [ "-mmacosx-version-min=14.0" ];
 
   commonObjCFlags = [
     "-Wall"

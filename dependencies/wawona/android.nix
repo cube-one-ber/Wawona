@@ -643,6 +643,12 @@ in
       ${gradleSupport.prepareProject}
       ${gradleSupport.prepareEnvironment}
 
+      # Generate Skip Android artifacts when skip is available in PATH.
+      mkdir -p android/Skip
+      if command -v skip >/dev/null 2>&1; then
+        skip export --project . -d android/Skip --debug || true
+      fi
+
       # Ensure no daemon-only JVM profile leaks in from gradle.properties.
       # With --no-daemon we still see single-use daemon forks if jvmargs is set.
       if [ -f gradle.properties ]; then

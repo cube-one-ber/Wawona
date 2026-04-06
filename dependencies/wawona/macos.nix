@@ -318,10 +318,33 @@ in
       SWIFT_OBJ=""
       SWIFT_SOURCES=(
         "macos-dependencies/uniffi/wawona.swift"
-        "src/platform/macos/ui/Machines/WWNMachinesViewModel.swift"
-        "src/platform/macos/ui/Machines/WWNMachineCardView.swift"
-        "src/platform/macos/ui/Machines/WWNMachineEditorView.swift"
-        "src/platform/macos/ui/Machines/WWNMachinesGridView.swift"
+        "Sources/WawonaModel/ClientLauncher.swift"
+        "Sources/WawonaModel/MachineProfile.swift"
+        "Sources/WawonaModel/SessionOrchestrator.swift"
+        "Sources/WawonaModel/WawonaPreferences.swift"
+        "Sources/WawonaUI/WawonaApp.swift"
+        "Sources/WawonaUI/CompositorBridge.swift"
+        "Sources/WawonaUI/WelcomeView.swift"
+        "Sources/WawonaUI/ContentView.swift"
+        "Sources/WawonaUI/Components/AdaptiveNavigationView.swift"
+        "Sources/WawonaUI/Components/GlassCard.swift"
+        "Sources/WawonaUI/Components/SectionHeader.swift"
+        "Sources/WawonaUI/Components/StatusBadge.swift"
+        "Sources/WawonaUI/Machines/MachinesRootView.swift"
+        "Sources/WawonaUI/Machines/MachinesGridView.swift"
+        "Sources/WawonaUI/Machines/MachineCardView.swift"
+        "Sources/WawonaUI/Machines/MachineEditorView.swift"
+        "Sources/WawonaUI/Machines/MachineDetailView.swift"
+        "Sources/WawonaUI/Settings/SettingsRootView.swift"
+        "Sources/WawonaUI/Settings/DisplaySettingsView.swift"
+        "Sources/WawonaUI/Settings/InputSettingsView.swift"
+        "Sources/WawonaUI/Settings/GraphicsSettingsView.swift"
+        "Sources/WawonaUI/Settings/ConnectionSettingsView.swift"
+        "Sources/WawonaUI/Settings/SSHWaypipeSettingsView.swift"
+        "Sources/WawonaUI/Settings/ClientsSettingsView.swift"
+        "Sources/WawonaUI/Settings/AdvancedSettingsView.swift"
+        "Sources/WawonaUI/Settings/AboutView.swift"
+        "Sources/WawonaUI/Settings/DependenciesView.swift"
       )
       EXISTING_SWIFT_SOURCES=()
       for swift_src in "''${SWIFT_SOURCES[@]}"; do
@@ -691,7 +714,7 @@ MVK_ICD_EOF
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2025-${currentYear} Alex Spaulding. All rights reserved.</string>
     <key>LSMinimumSystemVersion</key>
-    <string>26.0</string>
+    <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>CFBundleIcons</key>

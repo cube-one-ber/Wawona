@@ -14,6 +14,7 @@ Each profile uses this normalized shape:
 - `waypipeDebug`, `waypipeOneshot`, `waypipeDisableGpu`, `waypipeLoginShell`
 - `waypipeTitlePrefix`, `waypipeSecCtx`
 - `favorite`, `createdAtMs`, `updatedAtMs`
+- `launchers` (array of per-machine client launcher definitions)
 
 Machine `type` values:
 
@@ -37,3 +38,17 @@ Notes:
   into one initial machine profile when no profile list exists.
 - Runtime launch remains backward-compatible by applying the selected machine
   back into legacy runtime preference keys before connect/run.
+- The previous global Weston toggle in Advanced Settings is deprecated.
+  Launch behavior is now per-machine (or inherited from global defaults) via
+  `ClientLauncher`.
+
+## ClientLauncher schema
+
+Each machine can define zero or more launchers:
+
+- `id` (UUID)
+- `name` (`weston-terminal`, `foot`, `weston-simple-shm`, custom)
+- `displayName` (UI label)
+- `executablePath` (bundled binary or absolute path)
+- `arguments` (array of args)
+- `autoLaunch` (launch immediately when machine connects)
