@@ -675,12 +675,14 @@ in
       runHook preBuild
 
       # Build APK using Gradle
-      # Avoid forcing org.gradle.jvmargs here: that makes Gradle fork a
-      # single-use daemon process, which can fail to connect in sandboxed CI.
+      # Dexing Compose artifacts can exceed the default 512m Gradle JVM heap in
+      # sandboxed builds. Pin explicit JVM args so D8/R8 has enough memory.
+      export GRADLE_OPTS="-Xmx6144m -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
       gradle :app:assembleDebug --no-build-cache --no-watch-fs --no-daemon --max-workers=1 \
         -Dorg.gradle.parallel=false \
         -Dorg.gradle.workers.max=1 \
         -Dorg.gradle.daemon=false \
+        -Dorg.gradle.jvmargs="-Xmx6144m -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
         -Dkotlin.daemon.enabled=false \
         -Dkotlin.compiler.execution.strategy=in-process \
         -Dkotlin.incremental=false \

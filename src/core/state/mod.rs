@@ -1664,40 +1664,68 @@ mod tests {
 
 impl CompositorState {
     /// Fire presentation feedback for committed surfaces.
-    /// Only sends `presented` for feedbacks whose surface has been committed;
-    /// uncommitted feedbacks are retained for the next cycle.
+    /// Uses the same delivery path as `report_presentation_feedback`.
     pub fn fire_presentation_feedback(&mut self) {
-        let now = SystemTime::now();
-        let duration = now.duration_since(UNIX_EPOCH).unwrap();
+        let timestamp_ns = crate::core::Compositor::timestamp_ms() as u64 * 1_000_000;
+        let refresh_ns = 16_666_666; // 60 Hz default
+        let seq = self.next_presentation_seq();
+        self.ext.presentation.send_presented_events(timestamp_ns, refresh_ns, seq);
+    }
 
-        let tv_sec_hi = (duration.as_secs() >> 32) as u32;
-        let tv_sec_lo = (duration.as_secs() & 0xFFFFFFFF) as u32;
-        let tv_nsec = duration.subsec_nanos();
+    /// Remove state owned by a disconnected client.
+    ///
+    /// Nested compositors can be killed abruptly from the host UI. This keeps
+    /// the compositor's internal maps coherent even when teardown is abrupt.
+    pub fn cleanup_disconnected_client(&mut self, client: ClientId) {
+        self.protocol_to_internal_surface
+            .retain(|(cid, _), _| *cid != client);
 
-        let refresh_nsec = 16_666_666; // 60Hz default
+        let owned_surfaces: Vec<u32> = self
+            .surfaces
+            .iter()
+            .filter_map(|(sid, surf)| {
+                surf.read()
+                    .ok()
+                    .and_then(|s| (s.client_id == Some(client.clone())).then_some(*sid))
+            })
+            .collect();
 
-        use wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
-        let flags = wp_presentation_feedback::Kind::Vsync;
-
-        let mut remaining = Vec::new();
-
-        for feedback in self.ext.presentation.feedbacks.drain(..) {
-            if feedback.committed {
-                feedback.callback.presented(
-                    tv_sec_hi,
-                    tv_sec_lo,
-                    tv_nsec,
-                    refresh_nsec,
-                    0, // seq_hi
-                    0, // seq_lo
-                    flags,
-                );
-            } else {
-                remaining.push(feedback);
-            }
+        let mut owned_windows: Vec<u32> = owned_surfaces
+            .iter()
+            .filter_map(|sid| self.surface_to_window.get(sid).copied())
+            .collect();
+        owned_windows.sort_unstable();
+        owned_windows.dedup();
+        for wid in owned_windows {
+            self.destroy_window(wid);
         }
 
-        self.ext.presentation.feedbacks = remaining;
+        for sid in owned_surfaces {
+            self.subsurfaces.remove(&sid);
+            self.subsurface_children.remove(&sid);
+            for children in self.subsurface_children.values_mut() {
+                children.retain(|child| *child != sid);
+            }
+            self.remove_surface(sid);
+        }
+
+        self.buffers.retain(|(cid, _), _| *cid != client);
+        self.pending_buffer_releases
+            .retain(|(cid, _)| *cid != client);
+        self.shm_pools.retain(|(cid, _), _| *cid != client);
+        self.regions.retain(|(cid, _), _| *cid != client);
+        self.clients.remove(&client);
+
+        self.wlr.layer_surfaces.retain(|(cid, _), _| *cid != client);
+        self.wlr.surface_to_layer.retain(|(cid, _), _| *cid != client);
+        self.wlr.virtual_pointers.retain(|(cid, _), _| *cid != client);
+        self.wlr.virtual_keyboards.retain(|(cid, _), _| *cid != client);
+
+        self.xdg.surfaces.retain(|(cid, _), _| *cid != client);
+        self.xdg.toplevels.retain(|(cid, _), _| *cid != client);
+        self.xdg.popups.retain(|(cid, _), _| *cid != client);
+        self.xdg.positioners.retain(|(cid, _), _| *cid != client);
+        self.xdg.pending_pings.retain(|_, (cid, _, _)| *cid != client);
     }
 }
 
@@ -1802,7 +1830,8 @@ impl ProtocolState for CompositorState {
         self.wlr.client_disconnected(client.clone());
         self.xdg.client_disconnected(client.clone());
         self.data.client_disconnected(client.clone());
-        self.seat.client_disconnected(client);
+        self.seat.client_disconnected(client.clone());
+        self.cleanup_disconnected_client(client);
     }
 }
 

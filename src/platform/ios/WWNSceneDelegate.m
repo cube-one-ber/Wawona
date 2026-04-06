@@ -1,9 +1,93 @@
 #import "WWNSceneDelegate.h"
 #import "../macos/ui/Settings/WWNPreferencesManager.h"
+#import "../macos/ui/Settings/WWNPreferences.h"
 #import "../macos/ui/Settings/WWNSettingsSplitViewController.h"
+#import "../macos/ui/Settings/WWNWaypipeRunner.h"
+#import "../macos/ui/Machines/WWNMachinesCoordinator.h"
 #import "WWNCompositorBridge.h"
 #import <objc/message.h>
 #import "../../util/WWNLog.h"
+
+@interface WWNWelcomeViewController : UIViewController
+@property(nonatomic, copy) dispatch_block_t onContinue;
+@end
+
+@implementation WWNWelcomeViewController
+
+- (void)viewDidLoad {
+  [super viewDidLoad];
+
+  self.view.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.78];
+
+  UIView *card = [[UIView alloc] init];
+  card.translatesAutoresizingMaskIntoConstraints = NO;
+  card.backgroundColor = [UIColor secondarySystemBackgroundColor];
+  card.layer.cornerRadius = 16.0;
+  card.layer.masksToBounds = YES;
+  [self.view addSubview:card];
+
+  UILabel *titleLabel = [[UILabel alloc] init];
+  titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+  titleLabel.text = @"Welcome to Wawona";
+  titleLabel.textAlignment = NSTextAlignmentCenter;
+  titleLabel.font = [UIFont systemFontOfSize:28 weight:UIFontWeightSemibold];
+  titleLabel.numberOfLines = 0;
+
+  UILabel *bodyLabel = [[UILabel alloc] init];
+  bodyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+  bodyLabel.text =
+      @"Minimal Wayland compositing for Apple platforms and Android.";
+  bodyLabel.textAlignment = NSTextAlignmentCenter;
+  bodyLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightRegular];
+  bodyLabel.numberOfLines = 0;
+  bodyLabel.textColor = [UIColor secondaryLabelColor];
+
+  UIButton *continueButton = [UIButton buttonWithType:UIButtonTypeSystem];
+  continueButton.translatesAutoresizingMaskIntoConstraints = NO;
+  [continueButton setTitle:@"Continue" forState:UIControlStateNormal];
+  continueButton.titleLabel.font =
+      [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+  continueButton.backgroundColor = [UIColor systemBlueColor];
+  [continueButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+  continueButton.layer.cornerRadius = 10.0;
+  continueButton.contentEdgeInsets = UIEdgeInsetsMake(12, 20, 12, 20);
+  [continueButton addTarget:self
+                     action:@selector(handleContinueTapped)
+           forControlEvents:UIControlEventTouchUpInside];
+
+  UIStackView *stack = [[UIStackView alloc]
+      initWithArrangedSubviews:@[ titleLabel, bodyLabel, continueButton ]];
+  stack.translatesAutoresizingMaskIntoConstraints = NO;
+  stack.axis = UILayoutConstraintAxisVertical;
+  stack.alignment = UIStackViewAlignmentFill;
+  stack.spacing = 18.0;
+  [card addSubview:stack];
+
+  [NSLayoutConstraint activateConstraints:@[
+    [card.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+    [card.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+    [card.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.view.leadingAnchor
+                                                    constant:24.0],
+    [self.view.trailingAnchor constraintGreaterThanOrEqualToAnchor:card.trailingAnchor
+                                                           constant:24.0],
+    [card.widthAnchor constraintEqualToConstant:340.0],
+
+    [stack.topAnchor constraintEqualToAnchor:card.topAnchor constant:28.0],
+    [stack.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:22.0],
+    [stack.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-22.0],
+    [stack.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-22.0],
+  ]];
+
+  [continueButton.heightAnchor constraintEqualToConstant:48.0].active = YES;
+}
+
+- (void)handleContinueTapped {
+  if (self.onContinue) {
+    self.onContinue();
+  }
+}
+
+@end
 
 @interface WWNSceneDelegate ()
 @property(nonatomic, strong) UIButton *settingsButton;
@@ -16,6 +100,7 @@
 /// Last applied Respect Safe Area value — used to skip redundant logs.
 @property(nonatomic, assign) BOOL lastRespectSafeArea;
 @property(nonatomic, assign) BOOL hasAppliedSafeArea;
+@property(nonatomic, assign) BOOL showingMachinesUI;
 @end
 
 @implementation WWNSceneDelegate
@@ -87,6 +172,8 @@
 
   // Settings button — always anchored to the safe area
   [self setupSettingsButton];
+  self.compositorContainer.hidden = YES;
+  self.settingsButton.hidden = YES;
 
   // Observe preference changes so the user can toggle at runtime
   [[NSNotificationCenter defaultCenter]
@@ -96,6 +183,8 @@
            object:nil];
 
   WWNLog("SCENE", @"Wawona Scene connected and window created.");
+
+  [self presentWelcomeIfNeeded];
 }
 
 - (void)dealloc {
@@ -289,6 +378,12 @@
 
 - (void)sceneDidBecomeActive:(UIScene *)scene {
   WWNLog("SCENE", @"Scene became active");
+  if (!self.compositorContainer.hidden &&
+      ![WWNWaypipeRunner sharedRunner].isRunning) {
+    self.compositorContainer.hidden = YES;
+    self.settingsButton.hidden = YES;
+    [self presentMachinesConfigurationAfterWelcome];
+  }
 }
 
 - (void)sceneWillResignActive:(UIScene *)scene {
@@ -301,6 +396,78 @@
 
 - (void)sceneDidEnterBackground:(UIScene *)scene {
   WWNLog("SCENE", @"Scene did enter background");
+}
+
+- (void)presentWelcomeIfNeeded {
+  WWNPreferencesManager *prefs = [WWNPreferencesManager sharedManager];
+  if ([prefs hasSeenWelcome]) {
+    [self presentMachinesConfigurationAfterWelcome];
+    return;
+  }
+
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIViewController *root = self.window.rootViewController;
+    if (!root) {
+      return;
+    }
+
+    WWNWelcomeViewController *welcomeController =
+        [[WWNWelcomeViewController alloc] init];
+    welcomeController.modalPresentationStyle = UIModalPresentationOverFullScreen;
+    welcomeController.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+
+    __weak typeof(self) weakSelf = self;
+    __weak typeof(welcomeController) weakWelcomeController = welcomeController;
+    welcomeController.onContinue = ^{
+      __strong typeof(weakSelf) strongSelf = weakSelf;
+      __strong typeof(weakWelcomeController) strongWelcomeController =
+          weakWelcomeController;
+      if (!strongSelf) {
+        return;
+      }
+
+      [[WWNPreferencesManager sharedManager] setHasSeenWelcome:YES];
+      if (strongWelcomeController.presentingViewController) {
+        [strongWelcomeController
+            dismissViewControllerAnimated:YES
+                               completion:^{
+                                 [strongSelf
+                                     presentMachinesConfigurationAfterWelcome];
+                               }];
+      } else {
+        [strongSelf presentMachinesConfigurationAfterWelcome];
+      }
+    };
+
+    [root presentViewController:welcomeController animated:YES completion:nil];
+  });
+}
+
+- (void)presentMachinesConfigurationAfterWelcome {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (self.showingMachinesUI) {
+      return;
+    }
+    self.showingMachinesUI = YES;
+    UIViewController *presenter = self.window.rootViewController;
+    if (!presenter) {
+      self.showingMachinesUI = NO;
+      return;
+    }
+    __weak typeof(self) weakSelf = self;
+    [[WWNMachinesCoordinator sharedCoordinator]
+        presentMachinesFromViewController:presenter
+                                onConnect:^{
+                                  __strong typeof(weakSelf) strongSelf = weakSelf;
+                                  if (!strongSelf) {
+                                    return;
+                                  }
+                                  strongSelf.compositorContainer.hidden = NO;
+                                  strongSelf.settingsButton.hidden = NO;
+                                  strongSelf.showingMachinesUI = NO;
+                                  [strongSelf updateOutputSizeFromContainerForced:YES];
+                                }];
+  });
 }
 
 @end

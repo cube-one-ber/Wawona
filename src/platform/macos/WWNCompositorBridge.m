@@ -603,13 +603,25 @@ extern void WWNRenderSceneFree(CRenderScene *scene);
     // 1. Dispatch Wayland protocol events (accept connections, process
     //    client requests, build scene graph updates). This is the most
     //    expensive call and the primary reason we moved off main thread.
-    WWNCoreProcessEvents(self->_rustCore);
+    bool processed = WWNCoreProcessEvents(self->_rustCore);
+    if (!processed) {
+      WWNLog("TICK",
+             @"Skipping compositor tick after non-fatal event-loop failure");
+      dispatch_async(dispatch_get_main_queue(), ^{
+        atomic_store(&self->_compositorBusy, false);
+      });
+      return;
+    }
 
     // 2. Collect window-lifecycle events from Rust (cheap pops from a Vec)
     NSMutableArray *windowEvents = [NSMutableArray array];
     CWindowEvent *evt;
     while ((evt = WWNCorePopWindowEvent(self->_rustCore)) != NULL) {
       [windowEvents addObject:[NSValue valueWithPointer:evt]];
+    }
+    if (windowEvents.count > 0) {
+      WWNLog("TICK", @"Collected %lu window event(s) this tick",
+             (unsigned long)windowEvents.count);
     }
 
     // 3. Process pending buffers: create CGImages / lookup IOSurfaces and
@@ -647,6 +659,11 @@ extern void WWNRenderSceneFree(CRenderScene *scene);
     //    info lookups happen inside Rust; the returned CRenderScene is a
     //    self-contained snapshot safe to consume on any thread).
     CRenderScene *scene = WWNCoreGetRenderScene(self->_rustCore);
+    if (!scene && (windowEvents.count > 0 || poppedBufferCount > 0)) {
+      WWNLog("TICK",
+             @"GetRenderScene returned NULL (events=%lu, buffers=%lu)",
+             (unsigned long)windowEvents.count, (unsigned long)poppedBufferCount);
+    }
     {
       static NSUInteger sPrevPoppedCount = 0;
       static size_t sPrevSceneCount = 0;
@@ -674,25 +691,40 @@ extern void WWNRenderSceneFree(CRenderScene *scene);
       // Apply window events (create/destroy views, update titles)
       for (NSValue *val in windowEvents) {
         CWindowEvent *event = [val pointerValue];
-        [self _dispatchWindowEvent:event];
+        @try {
+          [self _dispatchWindowEvent:event];
+        } @catch (NSException *exception) {
+          WWNLog("TICK",
+                 @"Exception applying window event type=%llu win=%llu: %@ (%@)",
+                 event->event_type, event->window_id, exception.name,
+                 exception.reason);
+        }
         WWNWindowEventFree(event);
       }
 
       // Apply render scene (update CALayer geometry and contents)
       if (scene) {
-        for (size_t i = 0; i < scene->count; i++) {
-          [self updateLayerForNode:&scene->nodes[i]];
-        }
+        @try {
+          for (size_t i = 0; i < scene->count; i++) {
+            [self updateLayerForNode:&scene->nodes[i]];
+          }
 
 #if TARGET_OS_IPHONE || TARGET_OS_SIMULATOR
-        // Forward cursor rendering info to all iOS window views
-        [self _updateCursorFromScene:scene];
+          // Forward cursor rendering info to all iOS window views
+          [self _updateCursorFromScene:scene];
 #endif
+        } @catch (NSException *exception) {
+          WWNLog("TICK", @"Exception applying render scene: %@ (%@)",
+                 exception.name, exception.reason);
+        }
         WWNRenderSceneFree(scene);
       }
 
 #if !TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
       // Screencopy: capture window and write to client buffer
+      if (!self->_rustCore) {
+        WWNLog("TICK", @"Rust core became NULL before post-scene tasks");
+      }
       CScreencopyRequest screencopy =
           WWNCoreGetPendingScreencopy(self->_rustCore);
       if (screencopy.capture_id != 0 && screencopy.ptr != NULL &&
@@ -1917,8 +1949,42 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
 #else
   NSWindow *window = [_windows objectForKey:@(event->window_id)];
   if (window) {
-    [window close];
-    [_windows removeObjectForKey:@(event->window_id)];
+    @try {
+      if ([window isKindOfClass:[WWNWindow class]]) {
+        ((WWNWindow *)window).suppressCompositorCallbacks = YES;
+      }
+
+      // Detach known surface layers from this host view before teardown.
+      // This prevents stale layer tree references after client disconnect.
+      id contentView = [window contentView];
+      if ([contentView isKindOfClass:[WWNView class]]) {
+        CALayer *hostLayer = ((WWNView *)contentView).contentLayer;
+        NSArray<CALayer *> *children = [hostLayer.sublayers copy];
+        for (CALayer *layer in children) {
+          [layer removeFromSuperlayer];
+        }
+      }
+
+      [_windows removeObjectForKey:@(event->window_id)];
+
+      // Avoid NSWindow close-time delegate/first-responder cascades when the
+      // Wayland client has already been torn down. Hiding + detaching keeps
+      // host alive without touching potentially invalid compositor state.
+      [window setDelegate:nil];
+      [window orderOut:nil];
+      [window setContentView:nil];
+    } @catch (NSException *exception) {
+      WWNLog("BRIDGE",
+             @"Exception while destroying window %llu: %@ (%@)",
+             event->window_id, exception.name, exception.reason);
+      [_windows removeObjectForKey:@(event->window_id)];
+      @try {
+        [window orderOut:nil];
+      } @catch (NSException *inner) {
+        WWNLog("BRIDGE", @"Suppressed orderOut exception for window %llu: %@",
+               event->window_id, inner.reason);
+      }
+    }
     WWNLog("BRIDGE", @"Destroyed window %llu", event->window_id);
   }
 #endif

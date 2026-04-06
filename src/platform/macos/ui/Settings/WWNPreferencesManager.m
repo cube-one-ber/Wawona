@@ -34,6 +34,7 @@ NSString *const kWWNPrefsEnableDmabuf = @"DmabufEnabled";
 NSString *const kWWNPrefsVulkanDriver = @"VulkanDriver";
 NSString *const kWWNPrefsOpenGLDriver = @"OpenGLDriver";
 NSString *const kWWNPrefsRespectSafeArea = @"RespectSafeArea";
+NSString *const kWWNPrefsHasSeenWelcome = @"HasSeenWelcome";
 // Waypipe configuration keys
 NSString *const kWWNPrefsWaypipeDisplay = @"WaypipeDisplay";
 NSString *const kWWNPrefsWaypipeSocket = @"WaypipeSocket";
@@ -63,6 +64,13 @@ NSString *const kWWNPrefsWaypipeVsock = @"WaypipeVsock";
 NSString *const kWWNPrefsWaypipeXwls = @"WaypipeXwls";
 NSString *const kWWNPrefsWaypipeTitlePrefix = @"WaypipeTitlePrefix";
 NSString *const kWWNPrefsWaypipeSecCtx = @"WaypipeSecCtx";
+NSString *const kWWNPrefsMachineVMProviderStub = @"MachineVMProviderStub";
+NSString *const kWWNPrefsMachineVMDefaultVsockStub =
+    @"MachineVMDefaultVsockStub";
+NSString *const kWWNPrefsMachineContainerRuntimeStub =
+    @"MachineContainerRuntimeStub";
+NSString *const kWWNPrefsMachineContainerNamespaceStub =
+    @"MachineContainerNamespaceStub";
 // SSH configuration keys (separate from Waypipe)
 NSString *const kWWNPrefsSSHHost = @"SSHHost";
 NSString *const kWWNPrefsSSHUser = @"SSHUser";
@@ -228,6 +236,7 @@ static NSString *WWNPreferredSharedRuntimeDir(void) {
     kWWNPrefsForceServerSideDecorations : @NO,
     kWWNPrefsAutoScale : @YES,
     kWWNPrefsRespectSafeArea : @YES,
+    kWWNPrefsHasSeenWelcome : @NO,
     kWWNPrefsRenderMacOSPointer : @NO,
     // Input
     kWWNPrefsTouchInputType : @"Multi-Touch",
@@ -284,6 +293,11 @@ static NSString *WWNPreferredSharedRuntimeDir(void) {
     kWWNPrefsWaypipeTitlePrefix : @"",
     kWWNPrefsWaypipeSecCtx : @"",
     kWWNPrefsWaypipeUseSSHConfig : @YES,
+    // Machine stubs (v0.2.3)
+    kWWNPrefsMachineVMProviderStub : @"utm-se",
+    kWWNPrefsMachineVMDefaultVsockStub : @"1024",
+    kWWNPrefsMachineContainerRuntimeStub : @"docker",
+    kWWNPrefsMachineContainerNamespaceStub : @"default",
     // SSH
     kWWNPrefsSSHHost : @"",
     kWWNPrefsSSHUser : @"",
@@ -345,6 +359,7 @@ static NSString *WWNPreferredSharedRuntimeDir(void) {
   [defaults removeObjectForKey:kWWNPrefsAutoScale];
   [defaults removeObjectForKey:kWWNPrefsAutoRetinaScaling];
   [defaults removeObjectForKey:kWWNPrefsRespectSafeArea];
+  [defaults removeObjectForKey:kWWNPrefsHasSeenWelcome];
   [defaults removeObjectForKey:kWWNPrefsRenderMacOSPointer];
   // Input
   [defaults removeObjectForKey:kWWNPrefsTouchInputType];
@@ -394,6 +409,10 @@ static NSString *WWNPreferredSharedRuntimeDir(void) {
   [defaults removeObjectForKey:kWWNPrefsWaypipeTitlePrefix];
   [defaults removeObjectForKey:kWWNPrefsWaypipeSecCtx];
   [defaults removeObjectForKey:kWWNPrefsWaypipeCustomScript];
+  [defaults removeObjectForKey:kWWNPrefsMachineVMProviderStub];
+  [defaults removeObjectForKey:kWWNPrefsMachineVMDefaultVsockStub];
+  [defaults removeObjectForKey:kWWNPrefsMachineContainerRuntimeStub];
+  [defaults removeObjectForKey:kWWNPrefsMachineContainerNamespaceStub];
   // SSH
   [defaults removeObjectForKey:kWWNPrefsSSHHost];
   [defaults removeObjectForKey:kWWNPrefsSSHUser];
@@ -717,6 +736,16 @@ static NSString *WWNPreferredSharedRuntimeDir(void) {
 - (void)setRespectSafeArea:(BOOL)enabled {
   [[NSUserDefaults standardUserDefaults] setBool:enabled
                                           forKey:kWWNPrefsRespectSafeArea];
+}
+
+- (BOOL)hasSeenWelcome {
+  return [[NSUserDefaults standardUserDefaults]
+      boolForKey:kWWNPrefsHasSeenWelcome];
+}
+
+- (void)setHasSeenWelcome:(BOOL)seen {
+  [[NSUserDefaults standardUserDefaults] setBool:seen
+                                          forKey:kWWNPrefsHasSeenWelcome];
 }
 
 // New unified color management method

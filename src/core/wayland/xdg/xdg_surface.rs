@@ -21,13 +21,13 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
         _dhandle: &DisplayHandle,
         data_init: &mut wayland_server::DataInit<'_, Self>,
     ) {
-        let surface_id = resource.id().protocol_id();
+        let xdg_surface_id = resource.id().protocol_id();
         let client_id = _client.id();
-        let data = state.xdg.surfaces.get(&(client_id.clone(), surface_id)).cloned();
+        let data = state.xdg.surfaces.get(&(client_id.clone(), xdg_surface_id)).cloned();
         
         match request {
             xdg_surface::Request::GetToplevel { id } => {
-                crate::wlog!(crate::util::logging::COMPOSITOR, "xdg_surface.get_toplevel for surface {}", surface_id);
+                crate::wlog!(crate::util::logging::COMPOSITOR, "xdg_surface.get_toplevel for surface {}", xdg_surface_id);
                 if let Some(data) = data {
                     // Create a new window for this toplevel
                     let window_id = state.next_window_id();
@@ -43,7 +43,7 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
                     window.height = initial_height as i32;
                     
                     // Create toplevel data (wl_surface_id, xdg_surface_id)
-                    let mut toplevel_data = XdgToplevelData::new(window_id, data.surface_id, surface_id);
+                    let mut toplevel_data = XdgToplevelData::new(window_id, data.surface_id, xdg_surface_id);
                     toplevel_data.width = initial_width;
                     toplevel_data.height = initial_height;
                     // Store the window ID (u32) as user data for the toplevel resource
@@ -53,7 +53,7 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
                     state.xdg.toplevels.insert((client_id.clone(), toplevel.id().protocol_id()), toplevel_data);
                     
                     // Update surface data with window_id
-                    if let Some(surface_data) = state.xdg.surfaces.get_mut(&(client_id.clone(), surface_id)) {
+                    if let Some(surface_data) = state.xdg.surfaces.get_mut(&(client_id.clone(), xdg_surface_id)) {
                         surface_data.window_id = Some(window_id);
                     }
                     
@@ -88,6 +88,9 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
                         states, serial);
 
                     toplevel.configure(configure_w as i32, configure_h as i32, states);
+                    if let Some(surface_data) = state.xdg.surfaces.get_mut(&(client_id.clone(), xdg_surface_id)) {
+                        surface_data.pending_serial = serial;
+                    }
                     resource.configure(serial);
                     
                     // Set surface role
@@ -121,12 +124,13 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
             }
             xdg_surface::Request::GetPopup { id, parent, positioner } => {
                 if let Some(data) = data {
-                    let surface_id = data.surface_id;
+                    let wl_surface_id = data.surface_id;
                     // Set surface role
-                    if let Some(surface) = state.get_surface(surface_id) {
+                    if let Some(surface) = state.get_surface(wl_surface_id) {
                         let mut surface = surface.write().unwrap();
                         if let Err(e) = surface.set_role(crate::core::surface::SurfaceRole::Popup) {
-                            tracing::error!("Failed to set role for surface {}: {}", surface_id, e);
+                            tracing::error!("Failed to set role for surface {}: {}", wl_surface_id, e);
+                            return;
                         }
                     }
 
@@ -148,11 +152,20 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
                     
                     // Create popup state
                     let window_id = state.next_window_id();
+                    let parent_window_id = if let Some(parent_obj) = parent.as_ref() {
+                        state
+                            .xdg
+                            .surfaces
+                            .get(&(client_id.clone(), parent_obj.id().protocol_id()))
+                            .and_then(|d| d.window_id)
+                    } else {
+                        None
+                    };
                     let popup_data = XdgPopupData {
-                        surface_id: data.surface_id,
-                        xdg_surface_id: surface_id,
+                        surface_id: wl_surface_id,
+                        xdg_surface_id,
                         window_id,
-                        parent_id: parent.as_ref().map(|p| p.id().protocol_id()),
+                        parent_id: parent_window_id,
                         geometry: (px, py, positioner_data.width, positioner_data.height),
                         anchor_rect: positioner_data.anchor_rect,
                         grabbed: false,
@@ -169,31 +182,17 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
                     state.xdg.popups.insert((client_id.clone(), popup.id().protocol_id()), popup_data);
                     
                     // CRITICAL: Register in surface_to_window for buffer routing
-                    state.surface_to_window.insert(surface_id, window_id);
+                    state.surface_to_window.insert(wl_surface_id, window_id);
                     
                     // Update surface data with window_id
-                    if let Some(surface_data) = state.xdg.surfaces.get_mut(&(client_id.clone(), surface_id)) {
+                    if let Some(surface_data) = state.xdg.surfaces.get_mut(&(client_id.clone(), xdg_surface_id)) {
                         surface_data.window_id = Some(window_id);
                     }
                     
-                    tracing::debug!("Created xdg_popup for surface {}, window_id={}", surface_id, window_id);
-                    
-                    // CRITICAL: Push PopupCreated event for FFI layer
-                    // We need to resolve parent popup/toplevel ID to a Window ID if possible
-                    // For now, pass 0 as parent if lookup fails, but we should try
-                    let parent_window_id = if let Some(parent_obj) = parent.as_ref() {
-                        // This logic is simplified; parent could be xdg_surface or xdg_toplevel
-                        // Typically it's the xdg_surface ID. We need its window ID.
-                        // Assuming parent is XdgSurface resource:
-                        state.xdg.surfaces.get(&(client_id.clone(), parent_obj.id().protocol_id()))
-                             .and_then(|d| d.window_id)
-                             .unwrap_or(0)
-                    } else {
-                        0
-                    };
+                    tracing::debug!("Created xdg_popup for surface {}, window_id={}", wl_surface_id, window_id);
 
                     // Send enter events for all bound outputs
-                    let surface_res = if let Some(s) = state.get_surface(surface_id) {
+                    let surface_res = if let Some(s) = state.get_surface(wl_surface_id) {
                         s.read().unwrap().resource.clone()
                     } else {
                         None
@@ -212,8 +211,8 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
                         crate::core::compositor::CompositorEvent::PopupCreated {
                             client_id: client_id.clone(),
                             window_id,
-                            surface_id,
-                            parent_id: parent_window_id,
+                            surface_id: wl_surface_id,
+                            parent_id: parent_window_id.unwrap_or(0),
                             x: px,
                             y: py,
                             width: positioner_data.width.max(1) as u32,
@@ -224,11 +223,14 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
                     // Send initial configure
                         let next_serial = state.next_serial();
                         crate::wlog!(crate::util::logging::COMPOSITOR, "Configuring xdg_popup: window={} surface={} x={} y={} w={} h={} serial={}", 
-                            window_id, surface_id, px, py, positioner_data.width, positioner_data.height, next_serial);
+                            window_id, wl_surface_id, px, py, positioner_data.width, positioner_data.height, next_serial);
 
                         popup.configure(px, py, positioner_data.width, positioner_data.height);
                         
                         // Send surface configure
+                        if let Some(surface_data) = state.xdg.surfaces.get_mut(&(client_id.clone(), xdg_surface_id)) {
+                            surface_data.pending_serial = next_serial;
+                        }
                         resource.configure(next_serial);
                         return;
                 }
@@ -236,6 +238,23 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
             xdg_surface::Request::AckConfigure { serial } => {
                 crate::wlog!(crate::util::logging::COMPOSITOR, "Client acked configure serial {}", serial);
                 if let Some(data) = data {
+                    if let Some(surface_data) = state.xdg.surfaces.get(&(client_id.clone(), xdg_surface_id)) {
+                        if surface_data.pending_serial != 0 && serial != surface_data.pending_serial {
+                            resource.post_error(
+                                xdg_surface::Error::InvalidSerial,
+                                format!(
+                                    "ack_configure serial {} does not match pending serial {}",
+                                    serial, surface_data.pending_serial
+                                ),
+                            );
+                            return;
+                        }
+                    }
+                    if let Some(surface_data) = state.xdg.surfaces.get_mut(&(client_id.clone(), xdg_surface_id)) {
+                        surface_data.configured = true;
+                        surface_data.pending_serial = 0;
+                    }
+
                     // Mark the window as configured
                     if let Some(window_id) = data.window_id {
                         if let Some(window) = state.get_window(window_id) {
@@ -245,7 +264,7 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
                             // Check for toplevel state transitions
                             let mut to_finalize = None;
                             for ((cid, tl_proto_id), tl_data) in state.xdg.toplevels.iter() {
-                                if *cid == client_id && tl_data.xdg_surface_id == surface_id && tl_data.pending_serial == serial {
+                                if *cid == client_id && tl_data.xdg_surface_id == xdg_surface_id && tl_data.pending_serial == serial {
                                     to_finalize = Some((cid.clone(), *tl_proto_id));
                                     break;
                                 }
@@ -274,12 +293,12 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
                     "xdg_surface.set_window_geometry: ({}, {}) {}x{}",
                     x, y, width, height
                 );
-                if let Some(surface_data) = state.xdg.surfaces.get_mut(&(client_id.clone(), surface_id)) {
+                if let Some(surface_data) = state.xdg.surfaces.get_mut(&(client_id.clone(), xdg_surface_id)) {
                     surface_data.geometry = Some((x, y, width, height));
                 }
             }
             xdg_surface::Request::Destroy => {
-                state.xdg.surfaces.remove(&(client_id, surface_id));
+                state.xdg.surfaces.remove(&(client_id, xdg_surface_id));
                 tracing::debug!("xdg_surface destroyed");
             }
             _ => {}

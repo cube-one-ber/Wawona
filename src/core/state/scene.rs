@@ -8,8 +8,8 @@ use super::*;
 
 impl CompositorState {
     /// Report presentation feedback
-    pub fn report_presentation_feedback(&mut self, timestamp: std::time::Instant, refresh_mhz: u32) {
-        let seq = (timestamp.elapsed().as_millis() / 16) as u64; 
+    pub fn report_presentation_feedback(&mut self, _timestamp: std::time::Instant, refresh_mhz: u32) {
+        let seq = self.next_presentation_seq();
         
         let refresh_ns = if refresh_mhz > 0 {
             1_000_000_000_000 / refresh_mhz as u64
@@ -70,6 +70,7 @@ impl CompositorState {
             toplevel.configure(final_w as i32, final_h as i32, states);
             
             if let Some(surface_data) = self.xdg.surfaces.get_mut(&(client_id, xdg_surface_id)) {
+                surface_data.pending_serial = serial;
                 if let Some(resource) = &surface_data.resource {
                     crate::wlog!(crate::util::logging::COMPOSITOR, "Actually sending xdg_surface.configure(serial={}) to xdg_surface_id={}", serial, xdg_surface_id);
                     resource.configure(serial);

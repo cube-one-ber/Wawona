@@ -183,6 +183,13 @@ impl Dispatch<wl_surface::WlSurface, u32> for CompositorState {
                 }
             }
             wl_surface::Request::SetBufferScale { scale } => {
+                if scale <= 0 {
+                    resource.post_error(
+                        wl_surface::Error::InvalidScale,
+                        format!("buffer scale must be positive, got {}", scale),
+                    );
+                    return;
+                }
                 let id = *data;
                 if let Some(surface) = state.get_surface(id) {
                     let mut surface = surface.write().unwrap();

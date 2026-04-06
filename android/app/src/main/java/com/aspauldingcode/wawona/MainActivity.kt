@@ -17,14 +17,19 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -37,8 +42,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity(), SurfaceHolder.Callback {
@@ -166,14 +175,18 @@ fun WawonaApp(
     prefs: SharedPreferences,
     surfaceCallback: SurfaceHolder.Callback
 ) {
+    val context = LocalContext.current
+    val activity = context as? ComponentActivity
+
+    var profiles by remember { mutableStateOf(MachineProfileStore.loadProfiles(prefs)) }
+    val sessionOrchestrator = remember { SessionOrchestrator() }
+    var showMachinesHome by remember { mutableStateOf(true) }
+    var showWelcome by remember { mutableStateOf(!prefs.getBoolean("hasSeenWelcome", false)) }
     var showSettings by remember { mutableStateOf(false) }
     var isWaypipeRunning by remember { mutableStateOf(false) }
     var windowTitle by remember { mutableStateOf("") }
     val respectSafeArea = prefs.getBoolean("respectSafeArea", true)
-    val context = LocalContext.current
 
-    val activity = context as? ComponentActivity
-    
     var westonSimpleShmEnabled by remember {
         mutableStateOf(prefs.getBoolean("westonSimpleSHMEnabled", false))
     }
@@ -200,9 +213,6 @@ fun WawonaApp(
     }
 
     LaunchedEffect(westonSimpleShmEnabled, nativeWestonEnabled, nativeWestonTerminalEnabled) {
-        // Android Weston/weston-terminal are currently compatibility stubs.
-        // Route all three toggles to the in-process weston-simple-shm client so
-        // enabling from Settings has immediate visible behavior.
         val shouldRunCompatClient =
             westonSimpleShmEnabled || nativeWestonEnabled || nativeWestonTerminalEnabled
         val isRunning = WawonaNative.nativeIsWestonSimpleSHMRunning()
@@ -240,31 +250,28 @@ fun WawonaApp(
                     if (w > 0 && h > 0) {
                         try {
                             WawonaNative.nativeSyncOutputSize(w, h)
-                        } catch (_: Exception) { }
+                        } catch (_: Exception) {
+                        }
                     }
                 }
                 hadWindow = hasWindow
-
-                // Propagate the Wayland client's window title to the Android
-                // Activity so it appears in the Recents / Overview screen,
-                // mirroring how weston-terminal relays OSC 0/2 title changes.
                 if (windowTitle.isNotEmpty()) {
                     activity?.title = windowTitle
                     activity?.setTaskDescription(
                         android.app.ActivityManager.TaskDescription(windowTitle)
                     )
                 }
-            } catch (_: Exception) { }
+            } catch (_: Exception) {
+            }
             delay(500)
         }
     }
 
-    val wpSshEnabled = prefs.getBoolean("waypipeSSHEnabled", true)
-    val wpSshHost = prefs.getString("waypipeSSHHost", "") ?: ""
-    val wpSshUser = prefs.getString("waypipeSSHUser", "") ?: ""
-    val wpRemoteCommand = prefs.getString("waypipeRemoteCommand", "") ?: ""
-
-    fun launchWaypipe() {
+    fun launchWaypipe(): Boolean {
+        val wpSshEnabled = prefs.getBoolean("waypipeSSHEnabled", true)
+        val wpSshHost = prefs.getString("waypipeSSHHost", "") ?: ""
+        val wpSshUser = prefs.getString("waypipeSSHUser", "") ?: ""
+        val wpRemoteCommand = prefs.getString("waypipeRemoteCommand", "") ?: ""
         val sshPassword = prefs.getString("waypipeSSHPassword", "") ?: ""
         val remoteCmd = wpRemoteCommand.ifEmpty { "weston-terminal" }
         val compress = prefs.getString("waypipeCompress", "lz4") ?: "lz4"
@@ -277,7 +284,7 @@ fun WawonaApp(
         val titlePrefix = prefs.getString("waypipeTitlePrefix", "") ?: ""
         val secCtx = prefs.getString("waypipeSecCtx", "") ?: ""
 
-        try {
+        return try {
             val launched = WawonaNative.nativeRunWaypipe(
                 wpSshEnabled, wpSshHost, wpSshUser, sshPassword,
                 remoteCmd, compress, threads, video,
@@ -287,12 +294,15 @@ fun WawonaApp(
             if (launched) {
                 isWaypipeRunning = true
                 WLog.i("WAYPIPE", "Waypipe launched (ssh=$wpSshEnabled, host=$wpSshHost)")
+                true
             } else {
                 Toast.makeText(context, "Waypipe is already running", Toast.LENGTH_SHORT).show()
+                false
             }
         } catch (e: Exception) {
             WLog.e("WAYPIPE", "Error starting waypipe: ${e.message}")
             Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+            false
         }
     }
 
@@ -307,76 +317,241 @@ fun WawonaApp(
         }
     }
 
+    fun connectMachine(profile: MachineProfile, sessionId: String? = null) {
+        val targetSession = sessionId ?: sessionOrchestrator.startSession(profile).sessionId
+        MachineProfileStore.applyMachineToPrefs(prefs, profile)
+        MachineProfileStore.setActiveMachineId(prefs, profile.id)
+
+        val launched = when (profile.type) {
+            MachineType.NATIVE -> true
+            MachineType.SSH_WAYPIPE -> launchWaypipe()
+            MachineType.SSH_TERMINAL -> {
+                val withTerminalCommand = profile.copy(
+                    remoteCommand = profile.remoteCommand.ifBlank { "weston-terminal" }
+                )
+                MachineProfileStore.applyMachineToPrefs(prefs, withTerminalCommand)
+                launchWaypipe()
+            }
+            MachineType.VM -> {
+                Toast.makeText(
+                    context,
+                    "Virtual machine runtime is a v0.2.3 stub (UTM SE integration pending).",
+                    Toast.LENGTH_LONG
+                ).show()
+                false
+            }
+            MachineType.CONTAINER -> {
+                Toast.makeText(
+                    context,
+                    "Container runtime is a v0.2.3 stub (integration pending).",
+                    Toast.LENGTH_LONG
+                ).show()
+                false
+            }
+        }
+
+        if (launched) {
+            sessionOrchestrator.markConnected(targetSession)
+            sessionOrchestrator.setActiveSession(targetSession)
+            showMachinesHome = false
+        } else {
+            sessionOrchestrator.markDegraded(
+                targetSession,
+                "Launch unsupported or failed for ${profile.type.value}"
+            )
+        }
+    }
+
+    fun disconnectActiveSession() {
+        val activeId = sessionOrchestrator.activeSessionId ?: return
+        stopWaypipe()
+        sessionOrchestrator.markDisconnected(activeId)
+        sessionOrchestrator.setActiveSession(null)
+        showMachinesHome = true
+    }
+
     val density = LocalDensity.current
     val imeBottom = with(density) { WindowInsets.ime.getBottom(this) }
     val showAccessoryBar = imeBottom > 0
 
+    LaunchedEffect(Unit) {
+        // Always start on Machines so startup is predictable.
+        profiles = MachineProfileStore.loadProfiles(prefs)
+    }
+
+    if (showWelcome) {
+        AppWelcomeScreen(
+            onContinue = {
+                prefs.edit().putBoolean("hasSeenWelcome", true).apply()
+                showWelcome = false
+            }
+        )
+    } else if (showMachinesHome) {
+        MachineWelcomeScreen(
+            profiles = profiles,
+            sessions = sessionOrchestrator.sessions,
+            machineStatusFor = { machineId -> sessionOrchestrator.statusForMachine(machineId) },
+            onCreate = { profile ->
+                profiles = MachineProfileStore.upsertProfile(prefs, profile)
+            },
+            onUpdate = { profile ->
+                profiles = MachineProfileStore.upsertProfile(prefs, profile)
+            },
+            onDelete = { profile ->
+                profiles = MachineProfileStore.deleteProfile(prefs, profile.id)
+                sessionOrchestrator.sessions
+                    .filter { it.machineId == profile.id }
+                    .forEach { sessionOrchestrator.removeSession(it.sessionId) }
+            },
+            onConnect = { profile ->
+                val session = sessionOrchestrator.startSession(profile)
+                connectMachine(profile, session.sessionId)
+            },
+            onOpenSession = { session ->
+                val profile = profiles.firstOrNull { it.id == session.machineId }
+                if (profile != null) {
+                    connectMachine(profile, session.sessionId)
+                }
+            }
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MainActivity.CompositorBackground)
+                .windowInsetsPadding(WindowInsets.ime)
+        ) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                MachineSessionStrip(
+                    sessions = sessionOrchestrator.sessions.filter {
+                        it.state == MachineSessionState.CONNECTED ||
+                            it.state == MachineSessionState.CONNECTING ||
+                            it.state == MachineSessionState.DEGRADED
+                    },
+                    activeSessionId = sessionOrchestrator.activeSessionId,
+                    onShowMachines = { showMachinesHome = true },
+                    onSelectSession = { session ->
+                        val profile = profiles.firstOrNull { it.id == session.machineId }
+                            ?: return@MachineSessionStrip
+                        connectMachine(profile, session.sessionId)
+                    }
+                )
+            }
+
+            AndroidView(
+                factory = { ctx: Context ->
+                    WawonaSurfaceView(ctx).apply {
+                        holder.addCallback(surfaceCallback)
+                    }
+                },
+                update = { view -> surfaceViewRef = view },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(
+                        if (respectSafeArea) {
+                            Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
+                        } else {
+                            Modifier
+                        }
+                    )
+            )
+
+            if (showAccessoryBar) {
+                ModifierAccessoryBar(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth(),
+                    onDismissKeyboard = {
+                        val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                        val window = (context as? ComponentActivity)?.window
+                        val view = window?.currentFocus
+                        if (view != null && imm != null) {
+                            imm.hideSoftInputFromWindow(view.windowToken, 0)
+                        }
+                    }
+                )
+            }
+
+            ExpressiveFabMenu(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(
+                        start = 24.dp,
+                        top = 24.dp,
+                        end = 24.dp,
+                        bottom = if (showAccessoryBar) 24.dp + 80.dp else 24.dp
+                    ),
+                isWaypipeRunning = isWaypipeRunning,
+                onSettingsClick = { showSettings = true },
+                onStopWaypipeClick = { disconnectActiveSession() },
+                onMenuClosed = { surfaceViewRef?.requestFocus() }
+            )
+
+            if (showSettings) {
+                SettingsDialog(
+                    prefs = prefs,
+                    onDismiss = {
+                        profiles = MachineProfileStore.persistActiveMachineSettings(prefs)
+                        showSettings = false
+                        surfaceViewRef?.requestFocus()
+                    },
+                    onApply = {
+                        profiles = MachineProfileStore.persistActiveMachineSettings(prefs)
+                        WawonaSettings.apply(prefs)
+                    }
+                )
+            }
+        }
+    }
+
+    LaunchedEffect(isWaypipeRunning) {
+        if (!isWaypipeRunning) {
+            sessionOrchestrator.activeSessionId?.let { activeId ->
+                val active = sessionOrchestrator.activeSession()
+                if (active != null && active.state == MachineSessionState.CONNECTED) {
+                    sessionOrchestrator.markDisconnected(activeId)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppWelcomeScreen(onContinue: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MainActivity.CompositorBackground)
-            .windowInsetsPadding(WindowInsets.ime)
+            .statusBarsPadding()
+            .padding(horizontal = 28.dp, vertical = 24.dp)
     ) {
-        AndroidView(
-            factory = { ctx: Context ->
-                WawonaSurfaceView(ctx).apply {
-                    holder.addCallback(surfaceCallback)
-                }
-            },
-            update = { view -> surfaceViewRef = view },
-            modifier = Modifier
-                .fillMaxSize()
-                .then(
-                    if (respectSafeArea) {
-                        Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
-                    } else {
-                        Modifier
-                    }
-                )
-        )
-
-        if (showAccessoryBar) {
-            ModifierAccessoryBar(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth(),
-                onDismissKeyboard = {
-                    val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                    val window = (context as? ComponentActivity)?.window
-                    val view = window?.currentFocus
-                    if (view != null && imm != null) {
-                        imm.hideSoftInputFromWindow(view.windowToken, 0)
-                    }
-                }
+        Column(
+            modifier = Modifier.align(Alignment.Center),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(
+                text = "Welcome to Wawona",
+                style = MaterialTheme.typography.headlineSmall,
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold
             )
-        }
-
-        ExpressiveFabMenu(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(
-                    start = 24.dp,
-                    top = 24.dp,
-                    end = 24.dp,
-                    bottom = if (showAccessoryBar) 24.dp + 80.dp else 24.dp
-                ),
-            isWaypipeRunning = isWaypipeRunning,
-            onSettingsClick = { showSettings = true },
-            onRunWaypipeClick = { launchWaypipe() },
-            onStopWaypipeClick = { stopWaypipe() },
-            onMenuClosed = { surfaceViewRef?.requestFocus() }
-        )
-
-        if (showSettings) {
-            SettingsDialog(
-                prefs = prefs,
-                onDismiss = {
-                    showSettings = false
-                    surfaceViewRef?.requestFocus()
-                },
-                onApply = { WawonaSettings.apply(prefs) }
+            Text(
+                text = "A clean Wayland compositor experience.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.78f)
             )
+            Spacer(modifier = Modifier.height(6.dp))
+            Button(onClick = onContinue) {
+                Text("Continue")
+            }
         }
     }
 }

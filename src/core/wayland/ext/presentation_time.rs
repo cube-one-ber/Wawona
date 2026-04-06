@@ -35,21 +35,23 @@ impl PresentationState {
     }
 
     pub fn send_presented_events(&mut self, timestamp_ns: u64, refresh_ns: u64, seq: u64) {
-        let tv_sec = (timestamp_ns / 1_000_000_000) as u32;
+        let tv_sec = timestamp_ns / 1_000_000_000;
         let tv_nsec = (timestamp_ns % 1_000_000_000) as u32;
+        let tv_sec_hi = (tv_sec >> 32) as u32;
+        let tv_sec_lo = (tv_sec & 0xFFFF_FFFF) as u32;
         
         let mut i = 0;
         while i < self.feedbacks.len() {
             if self.feedbacks[i].committed {
                 let feedback = self.feedbacks.remove(i);
                 feedback.callback.presented(
-                    tv_sec,
+                    tv_sec_hi,
+                    tv_sec_lo,
                     tv_nsec,
                     refresh_ns as u32,
                     (seq >> 32) as u32,
                     (seq & 0xFFFFFFFF) as u32,
-                    0, // flags
-                    wp_presentation_feedback::Kind::empty(),
+                    wp_presentation_feedback::Kind::Vsync,
                 );
             } else {
                 i += 1;
@@ -98,7 +100,7 @@ impl Dispatch<wp_presentation::WpPresentation, ()> for CompositorState {
     ) {
         match request {
             wp_presentation::Request::Feedback { surface, callback } => {
-                let surface_id = surface.id().protocol_id();
+                let surface_id = surface.data::<u32>().copied().unwrap_or_else(|| surface.id().protocol_id());
 
                 
                 let feedback_resource: wp_presentation_feedback::WpPresentationFeedback = data_init.init(callback, ());
@@ -111,7 +113,13 @@ impl Dispatch<wp_presentation::WpPresentation, ()> for CompositorState {
 
             }
             wp_presentation::Request::Destroy => {
-                // connection closed
+                let client_id = _client.id();
+                state.ext.presentation.feedbacks.retain(|f| {
+                    f.callback
+                        .client()
+                        .map(|c| c.id() != client_id)
+                        .unwrap_or(false)
+                });
             }
             _ => {}
         }

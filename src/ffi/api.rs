@@ -580,6 +580,58 @@ impl WawonaCore {
 
 // Internal methods (not exported via UniFFI)
 impl WawonaCore {
+    /// Remove FFI-side caches owned by a disconnected client.
+    fn cleanup_client_ffi_state(&self, client_id: &wayland_server::backend::ClientId, internal_id: u32) {
+        let disconnected_surface_ids: Vec<u32> = {
+            let state = self.state.read().unwrap();
+            state
+                .surfaces
+                .iter()
+                .filter_map(|(sid, surf)| {
+                    surf.read()
+                        .ok()
+                        .and_then(|s| (s.client_id.as_ref() == Some(client_id)).then_some(*sid))
+                })
+                .collect()
+        };
+
+        if disconnected_surface_ids.is_empty() {
+            return;
+        }
+
+        {
+            let mut ffi_surfaces = self.ffi_surfaces.write().unwrap();
+            for sid in &disconnected_surface_ids {
+                ffi_surfaces.remove(sid);
+            }
+        }
+
+        let disconnected_surfaces: std::collections::HashSet<u32> =
+            disconnected_surface_ids.iter().copied().collect();
+        let mut disconnected_windows = std::collections::HashSet::new();
+        {
+            let mut pending = self.pending_buffers.write().unwrap();
+            pending.retain(|window_id, wb| {
+                let keep = !disconnected_surfaces.contains(&wb.surface_id.id);
+                if !keep {
+                    disconnected_windows.insert(*window_id);
+                }
+                keep
+            });
+        }
+        if !disconnected_windows.is_empty() {
+            let mut redraws = self.pending_redraws.write().unwrap();
+            redraws.retain(|wid| !disconnected_windows.contains(wid));
+        }
+
+        crate::wlog!(
+            crate::util::logging::FFI,
+            "ClientDisconnected cleanup: internal_id={} surfaces_removed={}",
+            internal_id,
+            disconnected_surface_ids.len()
+        );
+    }
+
     /// Get next serial number (for input event correlation)
     fn next_serial(&self) -> u32 {
         if let Some(compositor) = self.compositor.lock().unwrap().as_mut() {
@@ -609,8 +661,8 @@ impl WawonaCore {
                     }
                 );
             }
-            CompositorEvent::ClientDisconnected { client_id } => {
-                let internal_id = self.compositor.lock().unwrap().as_ref().unwrap().client_id_to_internal(client_id.clone());
+            CompositorEvent::ClientDisconnected { client_id, internal_id } => {
+                self.cleanup_client_ffi_state(&client_id, internal_id);
                 self.ffi_clients.write().unwrap().remove(&internal_id);
                 self.pending_client_events.write().unwrap().push(
                     ClientEvent::Disconnected { 
@@ -1234,6 +1286,7 @@ fn ensure_pointer_focus(
         let surface = surface.read().unwrap();
         if let Some(res) = &surface.resource {
             let serial = serial_fn();
+            state.seat.pointer.last_enter_serial = serial;
             let x = state.seat.pointer.x;
             let y = state.seat.pointer.y;
             state.seat.broadcast_pointer_enter(serial, res, x, y);
@@ -1658,6 +1711,7 @@ impl WawonaCore {
             if let Some(surface) = state.surfaces.get(&sid).cloned() {
                  let surface = surface.read().unwrap();
                  if let Some(res) = &surface.resource {
+                    state.seat.pointer.last_enter_serial = serial;
                      state.seat.broadcast_pointer_enter(serial, res, sx, sy);
                  }
             }

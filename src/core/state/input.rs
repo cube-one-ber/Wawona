@@ -5,6 +5,7 @@
 
 use super::*;
 use wayland_server::protocol::{wl_keyboard, wl_pointer};
+use wayland_server::Resource;
 
 impl CompositorState {
     // =========================================================================
@@ -154,10 +155,27 @@ impl CompositorState {
                         let surface = surface.read().unwrap();
                         if let Some(res) = &surface.resource {
                             let serial = self.next_serial();
+                            self.seat.pointer.last_enter_serial = serial;
+                            let mut active_offer = None;
                             for device_data in self.data.devices.values() {
-                                if device_data.resource.is_alive() {
-                                    device_data.resource.enter(serial, res, *lx, *ly, None);
+                                if device_data.resource.is_alive()
+                                    && device_data.resource.client() == res.client()
+                                {
+                                    let offer = self
+                                        .data
+                                        .drag
+                                        .as_ref()
+                                        .and_then(|drag| drag.offer_by_device.get(&device_data.resource.id().protocol_id()))
+                                        .and_then(|offer_id| self.data.offers.get(offer_id))
+                                        .and_then(|offer_data| offer_data.resource.as_ref());
+                                    if let Some(offer) = offer {
+                                        active_offer = Some(offer.id().protocol_id());
+                                    }
+                                    device_data.resource.enter(serial, res, *lx, *ly, offer);
                                 }
+                            }
+                            if let Some(drag) = &mut self.data.drag {
+                                drag.current_offer_id = active_offer;
                             }
                         }
                     }
@@ -207,6 +225,7 @@ impl CompositorState {
                     let surface = surface.read().unwrap();
                     if let Some(res) = &surface.resource {
                         let serial = self.next_serial();
+                            self.seat.pointer.last_enter_serial = serial;
                         for pointer in &self.seat.pointer.resources {
                             pointer.enter(serial, res, lx, ly);
                         }
@@ -238,6 +257,7 @@ impl CompositorState {
     pub fn inject_pointer_button(&mut self, button: u32, state: wl_pointer::ButtonState, time: u32) {
         self.ext.idle_notify.record_activity();
         let serial = self.next_serial();
+        self.seat.pointer.last_button_serial = serial;
         self.seat.cleanup_resources();
         
         if state == wl_pointer::ButtonState::Pressed {
@@ -531,6 +551,7 @@ impl CompositorState {
                                 
                                 self.serial += 1;
                                 let serial = self.serial;
+                                self.seat.pointer.last_enter_serial = serial;
                                 self.seat.broadcast_pointer_enter(serial, &res, lx, ly);
                             }
                             
@@ -612,6 +633,7 @@ impl CompositorState {
 
                 self.serial += 1;
                 let serial = self.serial;
+                self.seat.pointer.last_button_serial = serial;
                 self.seat.broadcast_pointer_button(serial, time_ms, button, wl_state, client.as_ref());
             }
             InputEvent::PointerAxis { horizontal, vertical, time_ms } => {

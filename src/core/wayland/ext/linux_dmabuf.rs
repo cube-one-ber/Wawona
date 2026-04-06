@@ -31,6 +31,7 @@ use wayland_protocols::wp::linux_dmabuf::zv1::server::{
     zwp_linux_dmabuf_v1, zwp_linux_buffer_params_v1,
 };
 use std::os::fd::IntoRawFd;
+use std::os::fd::RawFd;
 
 use crate::core::state::CompositorState;
 use std::collections::HashMap;
@@ -81,6 +82,15 @@ pub struct Plane {
     pub offset: u32,
     pub stride: u32,
     pub modifier: u64,
+}
+
+fn close_raw_fds(fds: &[RawFd]) {
+    for fd in fds {
+        // Safety: fds are owned by the compositor after `into_raw_fd`.
+        unsafe {
+            libc::close(*fd);
+        }
+    }
 }
 
 impl GlobalDispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for CompositorState {
@@ -186,8 +196,12 @@ impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, BufferParams> 
                 let p = state.ext.linux_dmabuf.pending_params.entry((client_id, params_id)).or_default();
                 
                 // Store FD by converting to raw (we own it now)
-
                 let raw_fd = fd.into_raw_fd();
+                if stride == 0 {
+                    unsafe { libc::close(raw_fd); }
+                    resource.failed();
+                    return;
+                }
                 p.fds.push(raw_fd);
                 p.offsets.push(offset);
                 p.strides.push(stride);
@@ -197,6 +211,11 @@ impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, BufferParams> 
                 let params_id = resource.id().protocol_id();
                 let client_id = _client.id();
                 if let Some(p) = state.ext.linux_dmabuf.pending_params.remove(&(client_id.clone(), params_id)) {
+                    if p.fds.is_empty() || width <= 0 || height <= 0 {
+                        close_raw_fds(&p.fds);
+                        resource.failed();
+                        return;
+                    }
                     let modifier = p.modifiers.first().copied().unwrap_or(0);
 
                     let is_iosurface = (modifier & 0x8000_0000_0000_0000) != 0;
@@ -232,9 +251,13 @@ impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, BufferParams> 
                         );
 
                         state.buffers.insert((client_id, internal_id), std::sync::Arc::new(std::sync::RwLock::new(buffer)));
+                        close_raw_fds(&p.fds);
                     } else {
+                        close_raw_fds(&p.fds);
                         resource.failed();
                     }
+                } else {
+                    resource.failed();
                 }
             }
             zwp_linux_buffer_params_v1::Request::CreateImmed { buffer_id, width, height, format, flags: _ } => {
@@ -242,6 +265,11 @@ impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, BufferParams> 
                 let params_id = resource.id().protocol_id();
                 let client_id = _client.id();
                 if let Some(p) = state.ext.linux_dmabuf.pending_params.remove(&(client_id.clone(), params_id)) {
+                     if p.fds.is_empty() || width <= 0 || height <= 0 {
+                         close_raw_fds(&p.fds);
+                         resource.failed();
+                         return;
+                     }
                      let modifier = p.modifiers.first().copied().unwrap_or(0);
 
                      let is_iosurface = (modifier & 0x8000_0000_0000_0000) != 0;
@@ -268,11 +296,15 @@ impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, BufferParams> 
                          );
                          
                          state.buffers.insert((client_id, internal_id), std::sync::Arc::new(std::sync::RwLock::new(buffer)));
+                         close_raw_fds(&p.fds);
                          
                          // Note: We don't send 'created' event for CreateImmed.
                      } else {
+                         close_raw_fds(&p.fds);
                          resource.failed();
                      }
+                } else {
+                    resource.failed();
                 }
             }
             zwp_linux_buffer_params_v1::Request::Destroy => {}

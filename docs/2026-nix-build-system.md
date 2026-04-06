@@ -44,7 +44,7 @@ The flake defines all inputs, overlays, and packages.
 | `nixpkgs`       | Base package set (unstable channel)                  |
 | `rust-overlay`  | Provides `rust-bin.stable.latest.default` with iOS/Android targets |
 | `crate2nix`     | Generates per-crate Nix derivations from `Cargo.lock` |
-| `hiahkernel`    | Custom kernel extension (macOS)                      |
+| `nix-xcodeenvtests` | Reference Apple host-Xcode wrapper model used by `dependencies/apple/` |
 
 ### Rust toolchain overlay
 
@@ -392,6 +392,17 @@ The iOS app is built in two stages:
 
 The automation script is what `nix run .#wawona-ios` invokes.
 
+### Shared Apple wrapper layer (`dependencies/apple/default.nix`)
+
+Apple host assumptions are centralized in one module:
+
+- Host Xcode discovery (`XCODE_APP`, `xcode-select`, newest `/Applications/Xcode*.app`)
+- Xcode wrapper command for PATH/DEVELOPER_DIR normalization
+- SDK verification helpers (`ensure-ios-sdk`, `ensure-ios-sim-sdk`, `ensure-macos-sdk`)
+- Simulator and provisioning scripts exported as flake apps
+
+This replaces scattered Xcode bootstrap logic and gives iOS/macOS one source of truth.
+
 ### macOS (`dependencies/wawona/macos.nix`)
 
 Standard `mkDerivation` that compiles Obj-C sources and links against the
@@ -409,6 +420,16 @@ Generates a `project.yml` consumed by `xcodegen` to produce
 `Wawona.xcodeproj`. The generated project references Nix-built static
 libraries and headers from the Nix store. It can optionally include or
 exclude the macOS target (`includeMacOSTarget`).
+
+---
+
+## CI Apple runner assumptions
+
+The Darwin workflow (`.github/workflows/nix.yml`) now treats host Xcode as explicit bootstrap state:
+
+- Select highest installed `Xcode*.app` with `sort -V | tail -1`
+- Export `XCODE_APP` and run `xcode-select -s "$XCODE_APP"` before Nix builds
+- Keep path coupling in CI/bootstrap only; build modules read normalized Apple env from `dependencies/apple/`
 
 ---
 

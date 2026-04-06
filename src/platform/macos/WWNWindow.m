@@ -681,7 +681,8 @@ static uint32_t MacosToXkbKeycode(unsigned short macCode) {
 }
 
 - (void)windowDidResize:(NSNotification *)notification {
-  if (self.processingResize || !self.isVisible) {
+  if (self.processingResize || self.suppressCompositorCallbacks ||
+      !self.isVisible) {
     return;
   }
 
@@ -701,6 +702,9 @@ static uint32_t MacosToXkbKeycode(unsigned short macCode) {
 
 - (void)becomeKeyWindow {
   [super becomeKeyWindow];
+  if (self.suppressCompositorCallbacks) {
+    return;
+  }
 
   WWNLog("INPUT", @"Window %llu became key - setting keyboard focus",
          self.wwnWindowId);
@@ -717,6 +721,9 @@ static uint32_t MacosToXkbKeycode(unsigned short macCode) {
 
 - (void)resignKeyWindow {
   [super resignKeyWindow];
+  if (self.suppressCompositorCallbacks) {
+    return;
+  }
 
   WWNLog("INPUT", @"Window %llu resigned key - removing keyboard focus",
          self.wwnWindowId);

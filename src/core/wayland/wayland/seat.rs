@@ -10,6 +10,7 @@ use wayland_server::{
 };
 
 use crate::core::state::CompositorState;
+use crate::core::surface::SurfaceRole;
 
 /// Seat global data
 pub struct SeatGlobal {
@@ -40,13 +41,13 @@ impl GlobalDispatch<wl_seat::WlSeat, SeatGlobal> for CompositorState {
         let seat = data_init.init(resource, ());
         crate::wlog!(crate::util::logging::SEAT, "DEBUG: Seat Bind Called for client {:?}", _client.id());
         state.seat_resources.insert(seat.id().protocol_id(), seat.clone());
-        
-        // Send capabilities
-        seat.capabilities(
-            wl_seat::Capability::Pointer | 
-            wl_seat::Capability::Keyboard |
-            wl_seat::Capability::Touch
-        );
+
+        // Send capabilities (touch only when touch support is active).
+        let mut caps = wl_seat::Capability::Pointer | wl_seat::Capability::Keyboard;
+        if !state.seat.touch.resources.is_empty() || !state.seat.touch.active_points.is_empty() {
+            caps |= wl_seat::Capability::Touch;
+        }
+        seat.capabilities(caps);
         
         // Send name (version 2+)
         if seat.version() >= 2 {
@@ -61,7 +62,7 @@ impl Dispatch<wl_seat::WlSeat, ()> for CompositorState {
     fn request(
         state: &mut Self,
         _client: &wayland_server::Client,
-        _resource: &wl_seat::WlSeat,
+        resource: &wl_seat::WlSeat,
         request: wl_seat::Request,
         _data: &(),
         _dhandle: &DisplayHandle,
@@ -89,6 +90,7 @@ impl Dispatch<wl_seat::WlSeat, ()> for CompositorState {
                 state.seat.add_touch(touch);
             }
             wl_seat::Request::Release => {
+                state.seat_resources.remove(&resource.id().protocol_id());
                 tracing::debug!("wl_seat released");
             }
             _ => {}
@@ -163,13 +165,64 @@ impl Dispatch<wl_pointer::WlPointer, ()> for CompositorState {
         _data_init: &mut wayland_server::DataInit<'_, Self>,
     ) {
         match request {
-             wl_pointer::Request::SetCursor { serial: _, surface, hotspot_x, hotspot_y } => {
-                let surface_id = surface.map(|s| s.id().protocol_id());
-                state.seat.pointer.cursor_surface = surface_id;
-                state.seat.pointer.cursor_hotspot_x = hotspot_x as f64;
-                state.seat.pointer.cursor_hotspot_y = hotspot_y as f64;
-                
-                if let Some(sid) = surface_id {
+             wl_pointer::Request::SetCursor { serial, surface, hotspot_x, hotspot_y } => {
+                // wl_pointer.set_cursor is only valid for the latest enter serial.
+                if serial != state.seat.pointer.last_enter_serial {
+                    tracing::debug!(
+                        "Ignoring set_cursor with stale serial {} (latest enter serial {})",
+                        serial,
+                        state.seat.pointer.last_enter_serial
+                    );
+                    return;
+                }
+
+                let mut internal_surface_id = None;
+                if let Some(surface) = surface {
+                    // The cursor surface must belong to the focused client.
+                    if let Some(focus_id) = state.seat.pointer.focus {
+                        let focus_client_id = state
+                            .get_surface(focus_id)
+                            .and_then(|s| s.read().ok()?.resource.as_ref().and_then(|r| r.client()))
+                            .map(|c| c.id());
+                        let cursor_client_id = surface.client().map(|c| c.id());
+                        if focus_client_id != cursor_client_id {
+                            resource.post_error(
+                                wl_pointer::Error::Role,
+                                "set_cursor surface must belong to focused client",
+                            );
+                            return;
+                        }
+                    }
+
+                    let protocol_id = surface.id().protocol_id();
+                    let mapped = state
+                        .protocol_to_internal_surface
+                        .get(&(_client.id(), protocol_id))
+                        .copied()
+                        .unwrap_or(protocol_id);
+
+                    // Cursor surface must have either no role yet or cursor role.
+                    if let Some(surface_ref) = state.get_surface(mapped) {
+                        let mut surface_state = surface_ref.write().unwrap();
+                        if let Err(err) = surface_state.set_role(SurfaceRole::Cursor) {
+                            resource.post_error(
+                                wl_pointer::Error::Role,
+                                format!("cursor surface role conflict: {}", err),
+                            );
+                            return;
+                        }
+                    }
+
+                    internal_surface_id = Some(mapped);
+                }
+
+                state.seat.pointer.set_cursor(
+                    internal_surface_id,
+                    hotspot_x as f64,
+                    hotspot_y as f64,
+                );
+
+                if let Some(sid) = internal_surface_id {
                     tracing::debug!("Seat cursor set to surface {} at ({}, {})", sid, hotspot_x, hotspot_y);
                 } else {
                     tracing::debug!("Seat cursor hidden");

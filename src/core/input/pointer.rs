@@ -24,6 +24,10 @@ pub struct PointerState {
     pub cursor_shape: Option<u32>,
     /// Bound pointer resources from clients
     pub resources: Vec<WlPointer>,
+    /// Serial of the most recent wl_pointer.enter sent to the focused client.
+    pub last_enter_serial: u32,
+    /// Serial of the most recent pointer button event.
+    pub last_button_serial: u32,
 }
 
 impl PointerState {

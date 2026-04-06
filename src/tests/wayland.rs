@@ -15,6 +15,8 @@ fn test_seat_defaults() {
     assert_eq!(state.seat.name, "seat0");
     assert!(state.seat.keyboard.focus.is_none());
     assert!(state.seat.pointer.focus.is_none());
+    assert_eq!(state.seat.pointer.last_enter_serial, 0);
+    assert_eq!(state.seat.pointer.last_button_serial, 0);
 }
 
 #[test]

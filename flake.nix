@@ -10,9 +10,13 @@
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     crate2nix.url = "github:nix-community/crate2nix";
+    "nix-xcodeenvtests" = {
+      url = "github:svanderburg/nix-xcodeenvtests";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, android-nixpkgs, rust-overlay, crate2nix }:
+  outputs = inputs@{ self, nixpkgs, android-nixpkgs, rust-overlay, crate2nix, ... }:
   let
     linuxSystems = [ "x86_64-linux" "aarch64-linux" ];
     darwinSystems = [ "x86_64-darwin" "aarch64-darwin" ];
@@ -174,6 +178,10 @@
           pkgsIos = pkgsIos;
           inherit androidAllowExperimentalFallback;
         };
+        appleToolchain = import ./dependencies/apple {
+          inherit (pkgs) lib pkgs;
+          nixXcodeenvtests = inputs."nix-xcodeenvtests";
+        };
         jdk17 = androidPkgs.jdk17;
         gradle = androidPkgs.gradle.override { java = jdk17; };
         
@@ -317,7 +325,11 @@
           wawona-android-provision = androidUtils.provisionAndroidScript;
         }) // (pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin (let
           teamId = let value = builtins.getEnv "TEAM_ID"; in if value == "" then null else value;
-          iosXcode = import ./dependencies/toolchains/ios-xcodeenv.nix { inherit (pkgs) lib pkgs; TEAM_ID = teamId; };
+          apple = import ./dependencies/apple {
+            inherit (pkgs) lib pkgs;
+            TEAM_ID = teamId;
+            nixXcodeenvtests = inputs."nix-xcodeenvtests";
+          };
           missingTeamRelease = name: pkgs.runCommand name { } ''
             echo "Set TEAM_ID and build with --impure to produce signed iOS release artifacts." >&2
             exit 1
@@ -422,7 +434,7 @@
             simulator = false;
             generateXCArchive = true;
           } else missingTeamRelease "wawona-ios-xcarchive";
-          wawona-ios-simulator = iosXcode.simulateApp {
+          wawona-ios-simulator = apple.simulateApp {
             name = "wawona-ios-simulator";
             app = wawona-ios-app-sim;
             bundleId = "com.aspauldingcode.Wawona";
@@ -443,8 +455,8 @@
           wawona-ios-sim-xcode-env = backend-ios-sim;
           wawona-macos-project = xcodegenOutputs.app;
           wawona-ios-project = xcodegenOutputs.app;
-          wawona-ios-provision = iosXcode.provisionXcodeScript;
-          wawona-ios-xcode-wrapper = iosXcode.xcodeWrapper;
+          wawona-ios-provision = apple.provisionXcodeScript;
+          wawona-ios-xcode-wrapper = apple.xcodeWrapperDrv;
           xcodegen = xcodegenOutputs.app;
           xcodegenProject = xcodegenOutputs.project;
           graphics-validate-macos = pkgs.callPackage ./dependencies/tests/graphics-validate.nix { };
@@ -465,7 +477,7 @@
       let
         appPrograms = import ./dependencies/wawona/app-programs.nix {
           inherit pkgs systemPackages;
-          xcodeUtils = import ./dependencies/utils/xcode-wrapper.nix { inherit (pkgs) lib pkgs; };
+          xcodeUtils = import ./dependencies/apple { inherit (pkgs) lib pkgs; nixXcodeenvtests = inputs."nix-xcodeenvtests"; };
         };
       in {
         nom = { type = "app"; program = "${pkgs.nix-output-monitor}/bin/nom"; };
@@ -489,10 +501,13 @@
     packages = allSystemPackages;
     apps = nixpkgs.lib.genAttrs systemsList (system: getAppsForSystem system (pkgsFor system) allSystemPackages.${system});
     devShells = nixpkgs.lib.genAttrs systemsList (system: {
-      default = let pkgs = pkgsFor system; in if pkgs.stdenv.isDarwin then (pkgs.mkShell {
+      default = let
+        pkgs = pkgsFor system;
+        apple = import ./dependencies/apple { inherit (pkgs) lib pkgs; nixXcodeenvtests = inputs."nix-xcodeenvtests"; };
+      in if pkgs.stdenv.isDarwin then (pkgs.mkShell {
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [ pkgs.nix-output-monitor pkgs.rustToolchain pkgs.libxkbcommon pkgs.libffi pkgs.wayland-protocols pkgs.openssl ]
-          ++ [ (import ./dependencies/utils/xcode-wrapper.nix { inherit (pkgs) lib pkgs; }).ensureIosSimSDK (import ./dependencies/utils/xcode-wrapper.nix { inherit (pkgs) lib pkgs; }).findXcodeScript ];
+          ++ [ apple.ensureIosSimSDK apple.findXcodeScript ];
         shellHook = "export XDG_RUNTIME_DIR=\"/tmp/wawona-$(id -u)\"; export WAYLAND_DISPLAY=\"wayland-0\"; alias nb='nom build'; alias nd='nom develop';";
       }) else (pkgs.mkShell {
         buildInputs = [ pkgs.hello pkgs.nix-output-monitor ];

@@ -180,7 +180,11 @@ impl Dispatch<xdg_toplevel::XdgToplevel, u32> for CompositorState {
                 // 1. Determine target output and calculate geometry
                 let (output_id, width, height) = {
                     let output_id = if let Some(o) = output {
-                        o.id().protocol_id()
+                        state
+                            .output_id_by_resource
+                            .get(&o.id())
+                            .copied()
+                            .unwrap_or_else(|| o.id().protocol_id())
                     } else {
                          if let Some(tl_data) = state.xdg.toplevels.get(&(client_id.clone(), toplevel_id)) {
                              if let Some(window) = state.get_window(tl_data.window_id) {

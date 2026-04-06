@@ -46,6 +46,7 @@ private enum class SettingsTab(val label: String, val icon: ImageVector) {
     ADVANCED("Advanced", Icons.Filled.Tune),
     WAYPIPE("Waypipe", Icons.Filled.Wifi),
     SSH("SSH", Icons.Filled.Lock),
+    MACHINES("Machines", Icons.Filled.Storage),
     ABOUT("About", Icons.Filled.Info),
     DEPENDENCIES("Dependencies", Icons.Filled.Inventory)
 }
@@ -142,12 +143,64 @@ fun SettingsDialog(
                         SettingsTab.ADVANCED -> AdvancedSection(prefs)
                         SettingsTab.WAYPIPE -> WaypipeSection(prefs, context)
                         SettingsTab.SSH -> SSHSection(prefs)
+                        SettingsTab.MACHINES -> MachineStubsSection(prefs)
                         SettingsTab.ABOUT -> AboutSection(context)
                         SettingsTab.DEPENDENCIES -> DependenciesSection()
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MachineStubsSection(prefs: SharedPreferences) {
+    SettingsSectionHeader("Virtual Machines", Icons.Filled.Storage)
+    SettingsTextInputItem(
+        prefs, "machineVmProviderStub", "VM Provider",
+        "Provider identifier for future VM integration", Icons.Filled.Storage,
+        "utm-se", KeyboardType.Text
+    )
+    SettingsTextInputItem(
+        prefs, "machineVmDefaultVsockStub", "Default VSock Port",
+        "Saved for future VM launch support", Icons.Filled.Tune,
+        "1024", KeyboardType.Number
+    )
+    Surface(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+    ) {
+        Text(
+            "VM launch is a v0.2.3 stub. Future support will come from Wawona's UTM SE fork.",
+            Modifier.padding(12.dp),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+
+    Spacer(Modifier.height(12.dp))
+
+    SettingsSectionHeader("Containers", Icons.Filled.Inventory2)
+    SettingsTextInputItem(
+        prefs, "machineContainerRuntimeStub", "Container Runtime",
+        "Default runtime for future container integration", Icons.Filled.Inventory2,
+        "docker", KeyboardType.Text
+    )
+    SettingsTextInputItem(
+        prefs, "machineContainerNamespaceStub", "Container Namespace",
+        "Saved stub value for upcoming runtime hooks", Icons.Filled.AccountTree,
+        "default", KeyboardType.Text
+    )
+    Surface(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+    ) {
+        Text(
+            "Container launch is a v0.2.3 stub and intentionally non-functional right now.",
+            Modifier.padding(12.dp),
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
 
@@ -616,9 +669,9 @@ private fun WaypipeLogsDialog(logPath: String, onDismiss: () -> Unit) {
     LaunchedEffect(logPath, refreshTrigger) {
         logContent = withContext(Dispatchers.IO) {
             try {
-                File(logPath).readText().ifEmpty { "(No logs yet. Run Waypipe to generate output.)" }
+                File(logPath).readText().ifEmpty { "(No logs yet. Start a machine session to generate output.)" }
             } catch (_: Exception) {
-                "(Log file not found or empty. Run Waypipe to generate output.)"
+                "(Log file not found or empty. Start a machine session to generate output.)"
             }
         }
     }

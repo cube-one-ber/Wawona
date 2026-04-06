@@ -96,6 +96,18 @@ jobs:
       - name: Run flake checks
         run: ./.github/scripts/nix-retry.sh nix flake check --print-build-logs
 
+  cargo-test-linux:
+    name: "Linux (x86_64): cargo test"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Run Rust tests
+        run: cargo test --lib --tests --locked
+
   build-linux:
     name: "Linux (x86_64): ${{ matrix.target }}"
     runs-on: ubuntu-latest
@@ -258,6 +270,7 @@ jobs:
             ls /Applications/Xcode*.app || true
             exit 1
           fi
+          echo "XCODE_APP=$XCODE_APP" >> "$GITHUB_ENV"
           sudo xcode-select -s "$XCODE_APP"
           xcodebuild -version
 
@@ -313,7 +326,11 @@ jobs:
       - name: Select Active Xcode
         run: |
           XCODE_APP=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE_APP" ]; then exit 1; fi
+          if [ -z "$XCODE_APP" ]; then
+            echo "::error::No Xcode installation found on this runner"
+            exit 1
+          fi
+          echo "XCODE_APP=$XCODE_APP" >> "$GITHUB_ENV"
           sudo xcode-select -s "$XCODE_APP"
 
       - name: Install Nix
@@ -344,7 +361,11 @@ jobs:
       - name: Select Active Xcode
         run: |
           XCODE_APP=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE_APP" ]; then exit 1; fi
+          if [ -z "$XCODE_APP" ]; then
+            echo "::error::No Xcode installation found on this runner"
+            exit 1
+          fi
+          echo "XCODE_APP=$XCODE_APP" >> "$GITHUB_ENV"
           sudo xcode-select -s "$XCODE_APP"
 
       - name: Install Nix
@@ -377,7 +398,11 @@ jobs:
       - name: Select Active Xcode
         run: |
           XCODE_APP=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE_APP" ]; then exit 1; fi
+          if [ -z "$XCODE_APP" ]; then
+            echo "::error::No Xcode installation found on this runner"
+            exit 1
+          fi
+          echo "XCODE_APP=$XCODE_APP" >> "$GITHUB_ENV"
           sudo xcode-select -s "$XCODE_APP"
 
       - name: Install Nix
@@ -438,7 +463,11 @@ jobs:
       - name: Select Active Xcode
         run: |
           XCODE_APP=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE_APP" ]; then exit 1; fi
+          if [ -z "$XCODE_APP" ]; then
+            echo "::error::No Xcode installation found on this runner"
+            exit 1
+          fi
+          echo "XCODE_APP=$XCODE_APP" >> "$GITHUB_ENV"
           sudo xcode-select -s "$XCODE_APP"
 
       - name: Install Nix
@@ -468,7 +497,11 @@ jobs:
       - name: Select Active Xcode
         run: |
           XCODE_APP=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE_APP" ]; then exit 1; fi
+          if [ -z "$XCODE_APP" ]; then
+            echo "::error::No Xcode installation found on this runner"
+            exit 1
+          fi
+          echo "XCODE_APP=$XCODE_APP" >> "$GITHUB_ENV"
           sudo xcode-select -s "$XCODE_APP"
 
       - name: Install Nix
@@ -548,7 +581,11 @@ jobs:
       - name: Select Active Xcode
         run: |
           XCODE_APP=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE_APP" ]; then exit 1; fi
+          if [ -z "$XCODE_APP" ]; then
+            echo "::error::No Xcode installation found on this runner"
+            exit 1
+          fi
+          echo "XCODE_APP=$XCODE_APP" >> "$GITHUB_ENV"
           sudo xcode-select -s "$XCODE_APP"
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v16
@@ -574,7 +611,11 @@ jobs:
       - name: Select Active Xcode
         run: |
           XCODE_APP=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE_APP" ]; then exit 1; fi
+          if [ -z "$XCODE_APP" ]; then
+            echo "::error::No Xcode installation found on this runner"
+            exit 1
+          fi
+          echo "XCODE_APP=$XCODE_APP" >> "$GITHUB_ENV"
           sudo xcode-select -s "$XCODE_APP"
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v16

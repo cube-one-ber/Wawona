@@ -97,7 +97,17 @@ stdenv.mkDerivation (
       export PATH=${xcodewrapper}/bin:$PATH
       export DEVELOPER_DIR="$(/usr/bin/xcode-select -p 2>/dev/null || true)"
       if [ -z "$DEVELOPER_DIR" ] || [ ! -x "$DEVELOPER_DIR/usr/bin/xcodebuild" ]; then
-        export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+        if [ -n "''${XCODE_APP:-}" ] && [ -x "$XCODE_APP/Contents/Developer/usr/bin/xcodebuild" ]; then
+          export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
+        else
+          XCODE_APP_CANDIDATE="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [ -n "$XCODE_APP_CANDIDATE" ] && [ -x "$XCODE_APP_CANDIDATE/Contents/Developer/usr/bin/xcodebuild" ]; then
+            export DEVELOPER_DIR="$XCODE_APP_CANDIDATE/Contents/Developer"
+          else
+            echo "ERROR: Could not resolve DEVELOPER_DIR. Set XCODE_APP or run xcode-select -s <Xcode.app>." >&2
+            exit 1
+          fi
+        fi
       fi
       export PATH="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin:$DEVELOPER_DIR/usr/bin:$PATH"
       export HOME="$TMPDIR/home"

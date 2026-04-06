@@ -29,6 +29,7 @@ extern NSString *const kWWNPrefsEnableDmabuf;
 extern NSString *const kWWNPrefsVulkanDriver;
 extern NSString *const kWWNPrefsOpenGLDriver;
 extern NSString *const kWWNPrefsRespectSafeArea;
+extern NSString *const kWWNPrefsHasSeenWelcome;
 // Waypipe configuration keys
 extern NSString *const kWWNPrefsWaypipeDisplay;
 extern NSString *const kWWNPrefsWaypipeSocket;
@@ -58,6 +59,11 @@ extern NSString *const kWWNPrefsWaypipeVsock;
 extern NSString *const kWWNPrefsWaypipeXwls;
 extern NSString *const kWWNPrefsWaypipeTitlePrefix;
 extern NSString *const kWWNPrefsWaypipeSecCtx;
+// Machine stub settings (v0.2.3)
+extern NSString *const kWWNPrefsMachineVMProviderStub;
+extern NSString *const kWWNPrefsMachineVMDefaultVsockStub;
+extern NSString *const kWWNPrefsMachineContainerRuntimeStub;
+extern NSString *const kWWNPrefsMachineContainerNamespaceStub;
 // SSH configuration keys (separate from Waypipe)
 extern NSString *const kWWNPrefsSSHHost;
 extern NSString *const kWWNPrefsSSHUser;
@@ -91,6 +97,8 @@ extern NSString *const kWWNPrefsWestonTerminalEnabled;
 - (void)setAutoScale:(BOOL)enabled;
 - (BOOL)respectSafeArea;
 - (void)setRespectSafeArea:(BOOL)enabled;
+- (BOOL)hasSeenWelcome;
+- (void)setHasSeenWelcome:(BOOL)seen;
 
 // Color Management
 - (BOOL)colorSyncSupportEnabled; // Legacy - use colorOperations

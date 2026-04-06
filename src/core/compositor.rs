@@ -8,8 +8,8 @@
 //!
 //! This is the Rust core that platform adapters interact with via FFI.
 
-use std::sync::Arc;
-use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, HashSet};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::time::{Duration, Instant};
 
@@ -21,6 +21,7 @@ use crate::core::state::CompositorState;
 use crate::core::window::DecorationMode;
 use crate::core::errors::CoreError;
 use crate::core::socket_manager::SocketManager;
+use crate::core::traits::ProtocolState;
 
 // Import protocol modules to ensure trait impls are linked
 #[allow(unused_imports)]
@@ -71,15 +72,22 @@ pub struct WawonaClientData {
     pub pid: Option<u32>,
     /// Connection timestamp
     pub connected_at: Instant,
+    /// Shared queue where disconnect callbacks are recorded for the compositor loop
+    pub disconnected_queue: Arc<Mutex<Vec<ClientId>>>,
 }
 
 impl WawonaClientData {
-    pub fn new(id: u32, backend_id: wayland_server::backend::ClientId) -> Self {
+    pub fn new(
+        id: u32,
+        backend_id: wayland_server::backend::ClientId,
+        disconnected_queue: Arc<Mutex<Vec<ClientId>>>,
+    ) -> Self {
         Self {
             id,
             backend_id,
             pid: None,
             connected_at: Instant::now(),
+            disconnected_queue,
         }
     }
 }
@@ -96,6 +104,9 @@ impl ClientData for WawonaClientData {
         };
         tracing::info!("Client {} disconnected: {} (internal id: {:?})", 
             self.id, reason_str, client_id);
+        if let Ok(mut queue) = self.disconnected_queue.lock() {
+            queue.push(client_id);
+        }
     }
 }
 
@@ -149,7 +160,10 @@ pub enum CompositorEvent {
     /// A new client connected
     ClientConnected { client_id: wayland_server::backend::ClientId, pid: Option<u32> },
     /// A client disconnected
-    ClientDisconnected { client_id: wayland_server::backend::ClientId },
+    ClientDisconnected {
+        client_id: wayland_server::backend::ClientId,
+        internal_id: u32,
+    },
     /// A new window was created
     WindowCreated {
         client_id: ClientId,
@@ -226,6 +240,9 @@ pub struct Compositor {
     /// Connected clients
     clients: HashMap<u32, WawonaClientData>,
     
+    /// Disconnect notifications collected from ClientData callbacks
+    disconnected_clients: Arc<Mutex<Vec<ClientId>>>,
+    
     /// Event queue for platform
     events: Vec<CompositorEvent>,
     
@@ -266,6 +283,7 @@ impl Compositor {
             config,
             next_client_id: 1,
             clients: HashMap::new(),
+            disconnected_clients: Arc::new(Mutex::new(Vec::new())),
             events: Vec::new(),
             running: false,
             serial: 1,
@@ -441,7 +459,11 @@ impl Compositor {
                     let backend_id = client.id();
                     tracing::info!("Accepted client connection: {} (backend={:?})", next_id, backend_id);
                     
-                    let client_data = WawonaClientData::new(next_id, backend_id.clone());
+                    let client_data = WawonaClientData::new(
+                        next_id,
+                        backend_id.clone(),
+                        self.disconnected_clients.clone(),
+                    );
                     
                     // Track the client
                     self.clients.insert(next_id, client_data.clone());
@@ -483,13 +505,33 @@ impl Compositor {
         // Accept any pending connections first
         self.accept_connections(state);
         
-        // Dispatch events to clients
-        let dispatched = self.display.dispatch_clients(state)
-            .context("Failed to dispatch Wayland events")?;
+        // Dispatch events to clients.
+        //
+        // A nested compositor (weston, cage, etc.) exiting can race with
+        // dispatch/flush and produce transient backend errors. Those should not
+        // be treated as fatal for the host compositor.
+        let dispatched = match self.display.dispatch_clients(state) {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::warn!(
+                    "Non-fatal Wayland dispatch error (client likely disconnected): {}",
+                    e
+                );
+                0
+            }
+        };
         
-        // Flush client event queues
-        self.display.flush_clients()
-            .context("Failed to flush clients")?;
+        // Flush client event queues. Treat disconnect-related failures as
+        // non-fatal to keep the compositor alive for remaining clients.
+        if let Err(e) = self.display.flush_clients() {
+            tracing::warn!(
+                "Non-fatal Wayland flush error (client likely disconnected): {}",
+                e
+            );
+        }
+        
+        // Reconcile clients that disconnected during dispatch/flush.
+        self.reconcile_disconnected_clients(state);
         
         // Fire presentation feedback for any committed frames
         state.fire_presentation_feedback();
@@ -502,6 +544,45 @@ impl Compositor {
         
         Ok(dispatched)
     }
+
+    /// Drain disconnect callback queue and clean up state for disconnected clients.
+    fn reconcile_disconnected_clients(&mut self, state: &mut CompositorState) {
+        let disconnected = {
+            let mut queue = match self.disconnected_clients.lock() {
+                Ok(q) => q,
+                Err(_) => {
+                    tracing::warn!("Failed to lock disconnected client queue");
+                    return;
+                }
+            };
+            queue.drain(..).collect::<Vec<_>>()
+        };
+
+        if disconnected.is_empty() {
+            return;
+        }
+
+        let mut seen = HashSet::new();
+        for backend_id in disconnected {
+            if !seen.insert(backend_id.clone()) {
+                continue;
+            }
+
+            let internal_id = self
+                .clients
+                .iter()
+                .find_map(|(id, data)| (data.backend_id == backend_id).then_some(*id));
+
+            state.client_disconnected(backend_id.clone());
+            self.events.push(CompositorEvent::ClientDisconnected {
+                client_id: backend_id.clone(),
+                internal_id: internal_id.unwrap_or(0),
+            });
+            if let Some(id) = internal_id {
+                self.clients.remove(&id);
+            }
+        }
+    }
     
     /// Dispatch with timeout (for poll-based event loops).
     /// Currently dispatches without blocking; proper epoll-based dispatch with
@@ -512,8 +593,14 @@ impl Compositor {
     
     /// Flush all client event queues
     pub fn flush(&mut self) -> Result<()> {
-        self.display.flush_clients()
-            .context("Failed to flush clients")?;
+        // Client disconnects can race with flush. Do not hard-fail the main
+        // compositor loop when this happens.
+        if let Err(e) = self.display.flush_clients() {
+            tracing::warn!(
+                "Non-fatal flush_clients error (client likely disconnected): {}",
+                e
+            );
+        }
         Ok(())
     }
     

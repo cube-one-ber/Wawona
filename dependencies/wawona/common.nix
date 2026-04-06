@@ -26,6 +26,10 @@ rec {
     # Apple platform UI
     "src/platform/macos/ui/Helpers/WWNImageLoader.m"
     "src/platform/macos/ui/Helpers/WWNImageLoader.h"
+    "src/platform/macos/ui/Machines/WWNMachineProfileStore.m"
+    "src/platform/macos/ui/Machines/WWNMachineProfileStore.h"
+    "src/platform/macos/ui/Machines/WWNMachinesCoordinator.m"
+    "src/platform/macos/ui/Machines/WWNMachinesCoordinator.h"
     "src/platform/macos/ui/Settings/WWNPreferences.m"
     "src/platform/macos/ui/Settings/WWNPreferences.h"
     "src/platform/macos/ui/Settings/WWNPreferencesManager.m"

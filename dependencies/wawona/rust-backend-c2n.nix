@@ -79,7 +79,7 @@ let
 
   # ── Xcode SDK detection (iOS/macOS) ────────────────────────────────
   ensureIosSDKHelpers = if isIOS then
-    (import ../toolchains/ios-xcodeenv.nix { inherit (pkgs) lib pkgs; })
+    (import ../apple/default.nix { inherit (pkgs) lib pkgs; })
   else {};
 
   # ── crate2nix: generate per-crate derivations ─────────────────────

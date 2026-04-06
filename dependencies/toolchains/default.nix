@@ -12,7 +12,7 @@
 
 let
   pkgsMacOS = pkgs;
-  iosToolchain = import ./ios-xcodeenv.nix { inherit lib pkgs; };
+  iosToolchain = import ../apple/default.nix { inherit lib pkgs; };
   callPackageFiltered = path: overrides:
     let
       fn = import path;

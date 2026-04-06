@@ -33,12 +33,7 @@ stdenv.mkDerivation {
       fi
 
       if [ -z "$selected" ]; then
-        for candidate in /Applications/Xcode.app /Applications/Xcode-beta.app /Applications/Xcode_*.app /Applications/Xcode*.app; do
-          if [ -d "$candidate" ]; then
-            selected="$candidate"
-            break
-          fi
-        done
+        selected="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1 || true)"
       fi
 
       if [ -z "$selected" ] || [ ! -d "$selected/Contents/Developer" ]; then

@@ -20,6 +20,7 @@ use wayland_server::{
 };
 
 use crate::core::state::CompositorState;
+use crate::core::surface::SurfaceRole;
 
 use std::collections::HashMap;
 
@@ -28,15 +29,19 @@ use wayland_server::protocol::wl_data_device_manager::DndAction;
 /// Data stored with data source
 #[derive(Debug, Clone)]
 pub struct DataSourceData {
+    pub resource: Option<WlDataSource>,
     pub mime_types: Vec<String>,
     pub dnd_actions: DndAction,
+    pub used: bool,
 }
 
 impl Default for DataSourceData {
     fn default() -> Self {
         Self {
+            resource: None,
             mime_types: Vec::new(),
             dnd_actions: DndAction::empty(),
+            used: false,
         }
     }
 }
@@ -49,6 +54,8 @@ impl DataSourceData {
 
 #[derive(Debug, Clone)]
 pub struct DataOfferData {
+    pub resource: Option<WlDataOffer>,
+    pub device_id: u32,
     pub source_id: Option<u32>,
     pub mime_types: Vec<String>,
     /// Source's advertised DnD actions (from wl_data_source::SetActions)
@@ -76,6 +83,8 @@ pub struct DragState {
     pub focus_surface_id: Option<u32>,
     /// The data offer created for the current focus surface
     pub current_offer_id: Option<u32>,
+    /// Pre-created offers keyed by wl_data_device protocol id.
+    pub offer_by_device: HashMap<u32, u32>,
     /// Serial of the grab that started this drag
     pub serial: u32,
 }
@@ -134,8 +143,9 @@ impl Dispatch<WlDataDeviceManager, ()> for CompositorState {
     ) {
         match request {
             wl_data_device_manager::Request::CreateDataSource { id } => {
-                let source_data = DataSourceData::new();
                 let source = data_init.init(id, ());
+                let mut source_data = DataSourceData::new();
+                source_data.resource = Some(source.clone());
                 state.data.sources.insert(source.id().protocol_id(), source_data);
                 
                 tracing::debug!("Created data source");
@@ -221,10 +231,57 @@ impl Dispatch<WlDataDevice, ()> for CompositorState {
                     icon.is_some()
                 );
                 
+                let source_id = source.as_ref().map(|s| s.id().protocol_id());
+
+                // start_drag requires the current implicit-grab serial.
+                if serial != state.seat.pointer.last_button_serial || state.seat.pointer.button_count == 0 {
+                    tracing::debug!(
+                        "Ignoring start_drag with invalid serial {} (last button serial: {}, button_count: {})",
+                        serial,
+                        state.seat.pointer.last_button_serial,
+                        state.seat.pointer.button_count
+                    );
+                    return;
+                }
+
+                if let Some(source_id) = source_id {
+                    if let Some(source_data) = state.data.sources.get_mut(&source_id) {
+                        if source_data.used {
+                            resource.post_error(
+                                wl_data_device::Error::UsedSource,
+                                format!("data source {} already used", source_id),
+                            );
+                            return;
+                        }
+                        source_data.used = true;
+                    }
+                }
+
+                if let Some(icon_surface) = icon.as_ref() {
+                    let protocol_id = icon_surface.id().protocol_id();
+                    let mapped = state
+                        .protocol_to_internal_surface
+                        .get(&(_client.id(), protocol_id))
+                        .copied()
+                        .unwrap_or(protocol_id);
+                    if let Some(surface_ref) = state.get_surface(mapped) {
+                        let mut surface_state = surface_ref.write().unwrap();
+                        if let Err(err) = surface_state.set_role(SurfaceRole::Cursor) {
+                            resource.post_error(
+                                wl_data_device::Error::Role,
+                                format!("drag icon surface role conflict: {}", err),
+                            );
+                            return;
+                        }
+                    }
+                }
+
                 state.start_drag(
-                    source.as_ref().map(|s| s.id().protocol_id()),
+                    _dhandle,
+                    source_id,
                     origin.id().protocol_id(),
                     icon.as_ref().map(|i| i.id().protocol_id()),
+                    serial,
                 );
             }
             wl_data_device::Request::SetSelection { source, serial } => {
@@ -234,6 +291,20 @@ impl Dispatch<WlDataDevice, ()> for CompositorState {
                     source.is_some()
                 );
                 
+                if let Some(source) = source.as_ref() {
+                    let source_id = source.id().protocol_id();
+                    if let Some(source_data) = state.data.sources.get_mut(&source_id) {
+                        if source_data.used {
+                            resource.post_error(
+                                wl_data_device::Error::UsedSource,
+                                format!("data source {} already used", source_id),
+                            );
+                            return;
+                        }
+                        source_data.used = true;
+                    }
+                }
+
                 let selection_source = source.as_ref().map(|s| crate::core::state::SelectionSource::Wayland(s.clone()));
                 state.set_clipboard_source(_dhandle, selection_source);
             }
@@ -297,16 +368,10 @@ impl Dispatch<WlDataOffer, ()> for CompositorState {
                 let offer_id = resource.id().protocol_id();
                 if let Some(offer_data) = state.data.offers.get(&offer_id) {
                     if let Some(source_id) = offer_data.source_id {
-                        // Find the wl_data_source resource for this source
-                        if let Some(selection) = &state.seat.current_selection {
-                            match selection {
-                                crate::core::state::SelectionSource::Wayland(src) => {
-                                    if src.id().protocol_id() == source_id {
-                                        src.send(mime_type, fd.as_fd());
-                                        tracing::debug!("Forwarded receive to wl_data_source {}", source_id);
-                                    }
-                                }
-                                _ => {}
+                        if let Some(source_data) = state.data.sources.get(&source_id) {
+                            if let Some(src) = source_data.resource.as_ref() {
+                                src.send(mime_type, fd.as_fd());
+                                tracing::debug!("Forwarded receive to wl_data_source {}", source_id);
                             }
                         }
                     }
@@ -331,15 +396,12 @@ impl Dispatch<WlDataOffer, ()> for CompositorState {
                     (None, DndAction::empty())
                 };
                 if let Some(sid) = source_id {
-                    if let Some(selection) = &state.seat.current_selection {
-                        match selection {
-                            crate::core::state::SelectionSource::Wayland(src) => {
-                                if src.id().protocol_id() == sid && src.is_alive() {
-                                    src.action(negotiated);
-                                    src.dnd_finished();
-                                }
+                    if let Some(source_data) = state.data.sources.get(&sid) {
+                        if let Some(src) = source_data.resource.as_ref() {
+                            if src.is_alive() {
+                                src.action(negotiated);
+                                src.dnd_finished();
                             }
-                            _ => {}
                         }
                     }
                 }

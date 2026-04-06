@@ -101,10 +101,13 @@ impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for CompositorState {
                         surface_protocol_id
                     });
                 
-                let output_id = output.map(|o| o.id().protocol_id()).unwrap_or_else(|| {
-                    // Default to primary output
+                let output_id = output.as_ref().map(|o| o.id().protocol_id()).unwrap_or_else(|| {
                     state.outputs.get(state.primary_output).map(|o| o.id).unwrap_or(0)
                 });
+                let output_id = output
+                    .as_ref()
+                    .and_then(|o| state.output_id_by_resource.get(&o.id()).copied())
+                    .unwrap_or(output_id);
                 
                 // Map the layer enum from the protocol to our u32
                 let layer_val = match layer {
@@ -146,10 +149,17 @@ impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for CompositorState {
                 // CRITICAL: Send initial configure event!
                 // wlroots clients BLOCK until they receive this configure event.
                 // Get output dimensions for the configure
-                let (output_width, output_height) = state.outputs
-                    .get(state.primary_output)
+                let (output_width, output_height) = state
+                    .outputs
+                    .iter()
+                    .find(|o| o.id == output_id)
                     .map(|o| (o.width, o.height))
-                    .unwrap_or((1920, 1080));
+                    .unwrap_or_else(|| {
+                        state.outputs
+                            .get(state.primary_output)
+                            .map(|o| (o.width, o.height))
+                            .unwrap_or((1920, 1080))
+                    });
                 
                 let serial = state.next_serial();
                 
@@ -203,6 +213,10 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, LayerSurfaceData> for C
                     ls.height = height;
                 }
                 state.reposition_layer_surfaces();
+                if let Some(ls) = state.get_layer_surface(client_id.clone(), surface_id) {
+                    let ls = ls.read().unwrap();
+                    state.configure_layer_surface(surface_id, ls.width, ls.height);
+                }
             }
             zwlr_layer_surface_v1::Request::SetAnchor { anchor } => {
                 let anchor_val = match anchor {
@@ -215,6 +229,10 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, LayerSurfaceData> for C
                     ls.anchor = anchor_val;
                 }
                 state.reposition_layer_surfaces();
+                if let Some(ls) = state.get_layer_surface(client_id.clone(), surface_id) {
+                    let ls = ls.read().unwrap();
+                    state.configure_layer_surface(surface_id, ls.width, ls.height);
+                }
             }
             zwlr_layer_surface_v1::Request::SetExclusiveZone { zone } => {
                 tracing::debug!("Layer surface {}: set_exclusive_zone {}", surface_id, zone);
@@ -223,6 +241,10 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, LayerSurfaceData> for C
                     ls.exclusive_zone = zone;
                 }
                 state.reposition_layer_surfaces();
+                if let Some(ls) = state.get_layer_surface(client_id.clone(), surface_id) {
+                    let ls = ls.read().unwrap();
+                    state.configure_layer_surface(surface_id, ls.width, ls.height);
+                }
             }
             zwlr_layer_surface_v1::Request::SetMargin { top, right, bottom, left } => {
                 tracing::debug!("Layer surface {}: set_margin t={} r={} b={} l={}", 
@@ -232,6 +254,10 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, LayerSurfaceData> for C
                     ls.margin = (top, right, bottom, left);
                 }
                 state.reposition_layer_surfaces();
+                if let Some(ls) = state.get_layer_surface(client_id.clone(), surface_id) {
+                    let ls = ls.read().unwrap();
+                    state.configure_layer_surface(surface_id, ls.width, ls.height);
+                }
             }
             zwlr_layer_surface_v1::Request::SetKeyboardInteractivity { keyboard_interactivity } => {
                 let interactivity_val = match keyboard_interactivity {
@@ -252,7 +278,9 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, LayerSurfaceData> for C
                 tracing::info!("Layer surface {}: ack_configure serial={}", surface_id, serial);
                 if let Some(ls) = state.get_layer_surface(client_id.clone(), surface_id) {
                     let mut ls = ls.write().unwrap();
-                    ls.configured = true;
+                    if serial == ls.pending_serial {
+                        ls.configured = true;
+                    }
                 }
             }
             zwlr_layer_surface_v1::Request::Destroy => {
@@ -271,6 +299,10 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, LayerSurfaceData> for C
                     ls.layer = layer_val;
                 }
                 state.reposition_layer_surfaces();
+                if let Some(ls) = state.get_layer_surface(_client.id(), surface_id) {
+                    let ls = ls.read().unwrap();
+                    state.configure_layer_surface(surface_id, ls.width, ls.height);
+                }
             }
             _ => {}
         }
@@ -287,17 +319,18 @@ impl CompositorState {
         let client_id = self.surfaces.get(&surface_id).and_then(|s| s.read().unwrap().client_id.clone());
         if let Some(cid) = client_id {
             if let Some(ls) = self.get_layer_surface(cid, surface_id) {
-            let serial = self.next_serial();
-            let mut ls = ls.write().unwrap();
-            ls.pending_serial = serial;
-            ls.width = width;
-            ls.height = height;
-            // Note: We'd need to store the resource to send the event
-            // This would require additional tracking in CompositorState
-            tracing::debug!(
-                "Layer surface {}: would send configure serial={} {}x{}",
-                surface_id, serial, width, height
-            );
+                let serial = self.next_serial();
+                let mut ls = ls.write().unwrap();
+                ls.pending_serial = serial;
+                ls.width = width;
+                ls.height = height;
+                if let Some(resource) = ls.resource.as_ref() {
+                    resource.configure(serial, width, height);
+                }
+                tracing::debug!(
+                    "Layer surface {}: sent configure serial={} {}x{}",
+                    surface_id, serial, width, height
+                );
             }
         }
     }

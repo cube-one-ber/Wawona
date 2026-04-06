@@ -494,10 +494,11 @@ fn test_shm_pool_resize() {
     
     // Verify pool exists in server
     let pool_id = Proxy::id(&pool).protocol_id();
+    let client_id = *env.state.clients.keys().next().expect("No server client");
     {
         let state = &env.state;
-        assert!(state.shm_pools.contains_key(&pool_id));
-        assert_eq!(state.shm_pools.get(&pool_id).unwrap().size, 4096);
+        assert!(state.shm_pools.contains_key(&(client_id, pool_id)));
+        assert_eq!(state.shm_pools.get(&(client_id, pool_id)).unwrap().size, 4096);
     }
     
     // Resize pool
@@ -507,7 +508,7 @@ fn test_shm_pool_resize() {
     // Verify resize in server
     {
         let state = &env.state;
-        assert_eq!(state.shm_pools.get(&pool_id).unwrap().size, 8192);
+        assert_eq!(state.shm_pools.get(&(client_id, pool_id)).unwrap().size, 8192);
     }
 }
 
@@ -542,9 +543,18 @@ fn test_subsurface_sync_commit() {
     
     let child_proto_id = Proxy::id(&child_surface).protocol_id();
     let parent_proto_id = Proxy::id(&parent_surface).protocol_id();
+    let client_id = *env.state.clients.keys().next().expect("No server client");
     
-    let child_id = *env.state.protocol_to_internal_surface.get(&child_proto_id).expect("Child internal ID not found");
-    let parent_id = *env.state.protocol_to_internal_surface.get(&parent_proto_id).expect("Parent internal ID not found");
+    let child_id = *env
+        .state
+        .protocol_to_internal_surface
+        .get(&(client_id, child_proto_id))
+        .expect("Child internal ID not found");
+    let parent_id = *env
+        .state
+        .protocol_to_internal_surface
+        .get(&(client_id, parent_proto_id))
+        .expect("Parent internal ID not found");
     
     // Verify subsurface relationship
     {

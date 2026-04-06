@@ -1,4 +1,5 @@
 #import "WWNPreferences.h"
+#import "../Machines/WWNMachinesCoordinator.h"
 #import "../../platform/macos/WWNCompositorBridge.h"
 #import "../../../../util/WWNLog.h"
 #import "../Helpers/WWNImageLoader.h"
@@ -550,6 +551,32 @@ static UIImage *WWNAboutLogo(void) {
   ];
   [sects addObject:advanced];
 
+  // MACHINES (stubs in v0.2.3)
+  WWNPreferencesSection *machines = [[WWNPreferencesSection alloc] init];
+  machines.title = @"Machines";
+  machines.icon = @"server.rack";
+#if TARGET_OS_IPHONE
+  machines.iconColor = [UIColor systemCyanColor];
+#else
+  machines.iconColor = [NSColor systemCyanColor];
+#endif
+  machines.items = @[
+    ITEM(@"Virtual Machine Provider", @"MachineVMProviderStub", WSettingText,
+         @"utm-se", @"Stub setting for future VM integration."),
+    ITEM(@"Virtual Machine VSock Port", @"MachineVMDefaultVsockStub",
+         WSettingNumber, @"1024",
+         @"Stub default VSock port for future VM launches."),
+    ITEM(@"Container Runtime", @"MachineContainerRuntimeStub", WSettingText,
+         @"docker", @"Stub setting for future container integration."),
+    ITEM(@"Container Namespace", @"MachineContainerNamespaceStub", WSettingText,
+         @"default", @"Stub namespace for future container runtime hooks."),
+    ITEM(
+        @"Status", nil, WSettingInfo, @"Coming Soon",
+        @"VM and container entries are persistent stubs in v0.2.3 and "
+        @"intentionally non-functional until runtime integration lands.")
+  ];
+  [sects addObject:machines];
+
   // WAYPIPE
   WWNPreferencesSection *waypipe = [[WWNPreferencesSection alloc] init];
   waypipe.title = @"Waypipe";
@@ -566,12 +593,6 @@ static UIImage *WWNAboutLogo(void) {
            @"View and copy the generated command.");
   previewBtn.actionBlock = ^{
     [weakSelf previewWaypipeCommand];
-  };
-
-  WWNSettingItem *runBtn = ITEM(@"Run Waypipe", @"WaypipeRun", WSettingButton,
-                                nil, @"Launch waypipe with current settings.");
-  runBtn.actionBlock = ^{
-    [weakSelf runWaypipe];
   };
 
   WWNSettingItem *stopBtn =
@@ -648,7 +669,6 @@ static UIImage *WWNAboutLogo(void) {
          @"is enabled on the remote system. Leave empty to use default "
          @"context."),
     previewBtn,
-    runBtn,
     stopBtn
   ];
   [sects addObject:waypipe];
@@ -3041,6 +3061,33 @@ static UIImage *WWNAboutLogo(void) {
   [self loadViewIfNeeded];
 }
 
+- (void)selectSectionWithTitle:(NSString *)title {
+  if (title.length == 0) {
+    return;
+  }
+  for (WWNPreferencesSection *section in self.sections) {
+    if ([section.title caseInsensitiveCompare:title] == NSOrderedSame) {
+      self.activeSection = section;
+      self.title = section.title;
+      if (self.isViewLoaded) {
+        [self.tableView reloadData];
+      }
+      break;
+    }
+  }
+}
+
+- (void)openMachinesConfiguration:(id)sender {
+  (void)sender;
+  UIViewController *presenter = self;
+  if (presenter.presentedViewController != nil) {
+    presenter = presenter.presentedViewController;
+  }
+  [[WWNMachinesCoordinator sharedCoordinator]
+      presentMachinesFromViewController:presenter
+                              onConnect:nil];
+}
+
 - (void)dismissSelf {
   [self dismissViewControllerAnimated:YES completion:nil];
 }
@@ -3790,6 +3837,34 @@ static UIImage *WWNAboutLogo(void) {
 - (void)showSection:(NSInteger)idx {
   self.content.section = self.sections[idx];
   [self.content.tableView reloadData];
+}
+
+- (void)selectSectionWithTitle:(NSString *)title {
+  if (title.length == 0) {
+    return;
+  }
+  NSUInteger idx = [self.sections
+      indexOfObjectPassingTest:^BOOL(WWNPreferencesSection *_Nonnull section,
+                                     NSUInteger i, BOOL *_Nonnull stop) {
+        (void)i;
+        (void)stop;
+        return [section.title caseInsensitiveCompare:title] == NSOrderedSame;
+      }];
+  if (idx == NSNotFound) {
+    return;
+  }
+
+  [self showSection:(NSInteger)idx];
+  if (self.sidebar.outlineView) {
+    [self.sidebar.outlineView
+        selectRowIndexes:[NSIndexSet indexSetWithIndex:idx]
+      byExtendingSelection:NO];
+  }
+}
+
+- (void)openMachinesConfiguration:(id)sender {
+  (void)sender;
+  [[WWNMachinesCoordinator sharedCoordinator] showMachinesWindowAndActivate:YES];
 }
 
 - (NSArray<NSToolbarItemIdentifier> *)toolbarDefaultItemIdentifiers:

@@ -99,7 +99,13 @@ impl Dispatch<xdg_popup::XdgPopup, u32> for CompositorState {
                 // Trigger surface configure to apply changes
                 if let Some(sid) = surface_id {
                      let serial = state.next_serial();
-                     if let Some(surface_data) = state.xdg.surfaces.get(&(client_id, sid)) {
+                     let xdg_surface_id = state
+                        .xdg
+                        .popups
+                        .get(&(client_id.clone(), popup_id))
+                        .map(|p| p.xdg_surface_id)
+                        .unwrap_or(sid);
+                     if let Some(surface_data) = state.xdg.surfaces.get(&(client_id, xdg_surface_id)) {
                         if let Some(surface_resource) = &surface_data.resource {
                              surface_resource.configure(serial);
                         }

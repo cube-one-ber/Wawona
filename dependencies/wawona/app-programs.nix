@@ -39,10 +39,8 @@
     xcrun simctl boot "$SIM_UDID" 2>/dev/null || true
     xcrun simctl bootstatus "$SIM_UDID" -b 2>/dev/null || true
     
-    SIM_APP_PATH=$(${xcodeUtils.findSimulatorScript}/bin/find-simulator)
-    SIM_APP_BUNDLE="$(dirname "$(dirname "$SIM_APP_PATH")")"
-    echo "Opening $SIM_APP_BUNDLE..."
-    open -a "$SIM_APP_BUNDLE" 2>/dev/null || true
+    echo "Opening Simulator.app..."
+    open -a "Simulator" 2>/dev/null || open -a "Simulator.app" 2>/dev/null || true
     
     echo "Installing Wawona.app to simulator..."
     TMP_APP_ROOT="/tmp/wawona-ios-install"

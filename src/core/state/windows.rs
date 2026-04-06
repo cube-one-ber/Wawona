@@ -4,6 +4,7 @@
 //! reconfiguration, clipboard selection, and drag-and-drop operations.
 
 use wayland_server::protocol::wl_data_device_manager::DndAction;
+use wayland_server::Resource;
 
 use super::*;
 
@@ -206,6 +207,8 @@ impl CompositorState {
                      }
                      let offer_id = offer.id().protocol_id();
                      self.data.offers.insert(offer_id, crate::core::wayland::ext::data_device::DataOfferData {
+                        resource: Some(offer.clone()),
+                        device_id: device.id().protocol_id(),
                          source_id,
                          mime_types: Vec::new(),
                          source_dnd_actions,
@@ -223,19 +226,62 @@ impl CompositorState {
     /// Start a drag-and-drop operation
     pub fn start_drag(
         &mut self,
+        dh: &wayland_server::DisplayHandle,
         source_id: Option<u32>,
         origin_surface_id: u32,
         icon_surface_id: Option<u32>,
+        serial: u32,
     ) {
         use crate::core::wayland::ext::data_device::DragState;
 
-        let serial = self.serial;
+        let mut offer_by_device = std::collections::HashMap::new();
+        if let Some(source_id) = source_id {
+            let (mime_types, source_dnd_actions) = if let Some(source_data) = self.data.sources.get(&source_id) {
+                (source_data.mime_types.clone(), source_data.dnd_actions)
+            } else {
+                (Vec::new(), DndAction::empty())
+            };
+
+            for device_data in self.data.devices.values() {
+                if let Some(client) = device_data.resource.client() {
+                    if let Ok(offer) = client.create_resource::<wayland_server::protocol::wl_data_offer::WlDataOffer, (), CompositorState>(
+                        dh,
+                        device_data.resource.version(),
+                        (),
+                    ) {
+                        device_data.resource.data_offer(&offer);
+                        for mime in &mime_types {
+                            offer.offer(mime.clone());
+                        }
+                        if offer.version() >= 3 {
+                            offer.source_actions(source_dnd_actions);
+                        }
+
+                        let offer_id = offer.id().protocol_id();
+                        self.data.offers.insert(
+                            offer_id,
+                            crate::core::wayland::ext::data_device::DataOfferData {
+                                resource: Some(offer),
+                                device_id: device_data.resource.id().protocol_id(),
+                                source_id: Some(source_id),
+                                mime_types: mime_types.clone(),
+                                source_dnd_actions,
+                                preferred_action: None,
+                            },
+                        );
+                        offer_by_device.insert(device_data.resource.id().protocol_id(), offer_id);
+                    }
+                }
+            }
+        }
+
         self.data.drag = Some(DragState {
             source_id,
             origin_surface_id,
             icon_surface_id,
             focus_surface_id: None,
             current_offer_id: None,
+            offer_by_device,
             serial,
         });
 
@@ -267,14 +313,11 @@ impl CompositorState {
             }
 
             if let Some(source_id) = drag.source_id {
-                if let Some(selection) = &self.seat.current_selection {
-                    match selection {
-                        SelectionSource::Wayland(src) => {
-                            if src.id().protocol_id() == source_id && src.is_alive() {
-                                src.dnd_drop_performed();
-                            }
+                if let Some(source_data) = self.data.sources.get(&source_id) {
+                    if let Some(src) = source_data.resource.as_ref() {
+                        if src.is_alive() {
+                            src.dnd_drop_performed();
                         }
-                        _ => {}
                     }
                 }
             }
@@ -290,14 +333,11 @@ impl CompositorState {
             }
 
             if let Some(source_id) = drag.source_id {
-                if let Some(selection) = &self.seat.current_selection {
-                    match selection {
-                        SelectionSource::Wayland(src) => {
-                            if src.id().protocol_id() == source_id && src.is_alive() {
-                                src.cancelled();
-                            }
+                if let Some(source_data) = self.data.sources.get(&source_id) {
+                    if let Some(src) = source_data.resource.as_ref() {
+                        if src.is_alive() {
+                            src.cancelled();
                         }
-                        _ => {}
                     }
                 }
             }

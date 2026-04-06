@@ -21,6 +21,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (instancetype)sharedPreferences;
 - (void)showPreferences:(id)sender;
+- (void)selectSectionWithTitle:(NSString *)title;
+- (void)openMachinesConfiguration:(id)sender;
 #if TARGET_OS_IPHONE || TARGET_OS_SIMULATOR
 - (void)dismissSelf;
 #endif

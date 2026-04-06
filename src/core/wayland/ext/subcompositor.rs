@@ -20,6 +20,7 @@ use wayland_server::{
 };
 
 use crate::core::state::CompositorState;
+use crate::core::surface::SurfaceRole;
 
 /// Subcompositor global data
 #[derive(Debug, Default)]
@@ -65,13 +66,10 @@ impl Dispatch<WlSubcompositor, ()> for CompositorState {
                 // Client is done with subcompositor
             }
             wl_subcompositor::Request::GetSubsurface { id, surface, parent } => {
-                // Validate that surface doesn't already have a role
-                // In a full implementation, we'd check surface.data() for existing role
-                
                 // Validate that surface is not the parent or an ancestor
                 if surface == parent {
                     resource.post_error(
-                        wl_subcompositor::Error::BadSurface,
+                        wl_subcompositor::Error::BadParent,
                         "Cannot make a surface its own subsurface",
                     );
                     return;
@@ -92,6 +90,43 @@ impl Dispatch<WlSubcompositor, ()> for CompositorState {
                     .get(&(client_id, parent_protocol_id))
                     .copied()
                     .unwrap_or(parent_protocol_id);
+
+                // Cannot assign subsurface role twice.
+                if state.subsurfaces.contains_key(&surface_id) {
+                    resource.post_error(
+                        wl_subcompositor::Error::BadSurface,
+                        format!("surface {} is already a subsurface", surface_id),
+                    );
+                    return;
+                }
+
+                // Prevent parent cycles.
+                let mut ancestor = parent_id;
+                for _ in 0..64 {
+                    if ancestor == surface_id {
+                        resource.post_error(
+                            wl_subcompositor::Error::BadParent,
+                            "Cannot create subsurface cycle",
+                        );
+                        return;
+                    }
+                    let Some(parent_state) = state.subsurfaces.get(&ancestor) else {
+                        break;
+                    };
+                    ancestor = parent_state.parent_id;
+                }
+
+                // Child surface role must be None/Subsurface.
+                if let Some(surface_ref) = state.get_surface(surface_id) {
+                    let mut surface_state = surface_ref.write().unwrap();
+                    if let Err(err) = surface_state.set_role(SurfaceRole::Subsurface) {
+                        resource.post_error(
+                            wl_subcompositor::Error::BadSurface,
+                            format!("subsurface role conflict: {}", err),
+                        );
+                        return;
+                    }
+                }
                 
                 let subsurface_state = SubsurfaceState {
                     surface_id,

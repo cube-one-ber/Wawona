@@ -67,7 +67,11 @@ impl Dispatch<ZxdgOutputManagerV1, ()> for CompositorState {
     ) {
         match request {
             zxdg_output_manager_v1::Request::GetXdgOutput { id, output } => {
-                let output_id = output.id().protocol_id();
+                let output_id = state
+                    .output_id_by_resource
+                    .get(&output.id())
+                    .copied()
+                    .unwrap_or_else(|| output.id().protocol_id());
                 let xdg_output_data = XdgOutputData::new(output_id);
                 let xdg_output = data_init.init(id, ());
 
@@ -76,8 +80,12 @@ impl Dispatch<ZxdgOutputManagerV1, ()> for CompositorState {
                 state.xdg.output.resources.insert((_client.id().clone(), xdg_output_id), xdg_output.clone());
 
                 
-                // Send output information
-                let output_state = state.primary_output();
+                // Send output information for the bound wl_output.
+                let output_state = state
+                    .outputs
+                    .iter()
+                    .find(|o| o.id == output_id)
+                    .unwrap_or_else(|| state.primary_output());
                 
                 xdg_output.logical_position(output_state.x, output_state.y);
                 
@@ -144,17 +152,31 @@ impl Dispatch<ZxdgOutputV1, ()> for CompositorState {
 /// Notify all xdg_output resources about output configuration changes.
 /// Called when output geometry, mode, or scale changes.
 pub fn notify_xdg_output_change(state: &CompositorState) {
-    let output_state = state.primary_output();
-    // OutputState.width/height are already logical (points/dp).
-    let lw = output_state.width as i32;
-    let lh = output_state.height as i32;
-
-    for (_, xdg_output) in &state.xdg.output.resources {
+    for ((cid, xdg_output_id), xdg_output) in &state.xdg.output.resources {
         if !xdg_output.is_alive() {
             continue;
         }
+        let Some(data) = state.xdg.output.outputs.get(&(cid.clone(), *xdg_output_id)) else {
+            continue;
+        };
+        let Some(output_state) = state.outputs.iter().find(|o| o.id == data.output_id) else {
+            continue;
+        };
+        let lw = output_state.width as i32;
+        let lh = output_state.height as i32;
+
         xdg_output.logical_position(output_state.x, output_state.y);
         xdg_output.logical_size(lw, lh);
+        if xdg_output.version() >= 2 {
+            xdg_output.name(output_state.name.clone());
+            xdg_output.description(format!(
+                "{} ({}x{} @ {}Hz)",
+                output_state.name,
+                output_state.width,
+                output_state.height,
+                output_state.refresh / 1000
+            ));
+        }
 
         if xdg_output.version() >= 3 {
             xdg_output.done();
@@ -163,9 +185,8 @@ pub fn notify_xdg_output_change(state: &CompositorState) {
 
     if !state.xdg.output.resources.is_empty() {
         tracing::debug!(
-            "Notified {} xdg_output resources of change: logical {}x{} at ({}, {})",
-            state.xdg.output.resources.len(),
-            lw, lh, output_state.x, output_state.y
+            "Notified {} xdg_output resources of output changes",
+            state.xdg.output.resources.len()
         );
     }
 }
@@ -175,16 +196,31 @@ pub fn notify_xdg_output_change_for_client(
     state: &CompositorState,
     client_id: &wayland_server::backend::ClientId,
 ) {
-    let output_state = state.primary_output();
-    let lw = output_state.width as i32;
-    let lh = output_state.height as i32;
-
-    for ((cid, _), xdg_output) in &state.xdg.output.resources {
+    for ((cid, xdg_output_id), xdg_output) in &state.xdg.output.resources {
         if cid != client_id || !xdg_output.is_alive() {
             continue;
         }
+        let Some(data) = state.xdg.output.outputs.get(&(cid.clone(), *xdg_output_id)) else {
+            continue;
+        };
+        let Some(output_state) = state.outputs.iter().find(|o| o.id == data.output_id) else {
+            continue;
+        };
+        let lw = output_state.width as i32;
+        let lh = output_state.height as i32;
+
         xdg_output.logical_position(output_state.x, output_state.y);
         xdg_output.logical_size(lw, lh);
+        if xdg_output.version() >= 2 {
+            xdg_output.name(output_state.name.clone());
+            xdg_output.description(format!(
+                "{} ({}x{} @ {}Hz)",
+                output_state.name,
+                output_state.width,
+                output_state.height,
+                output_state.refresh / 1000
+            ));
+        }
         if xdg_output.version() >= 3 {
             xdg_output.done();
         }

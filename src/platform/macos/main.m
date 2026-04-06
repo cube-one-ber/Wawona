@@ -158,6 +158,7 @@ int main(int argc, char *argv[]) {
 //
 
 #import "./ui/About/WWNAboutPanel.h"
+#import "./ui/Machines/WWNMachinesCoordinator.h"
 #import "./ui/Settings/WWNPreferences.h"
 
 // Global references for signal handler
@@ -272,8 +273,19 @@ static void setup_signal_sources(void) {
 @implementation WWNMacAppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
-  // WWN macOS launches with no windows — the compositor runs
-  // in the background and the user can open Settings from the menu bar.
+  // WWN now launches into a standalone Machines app view.
+  WWNPreferencesManager *prefs = [WWNPreferencesManager sharedManager];
+  if (![prefs hasSeenWelcome]) {
+    [NSApp activateIgnoringOtherApps:YES];
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"Welcome to Wawona";
+    alert.informativeText =
+        @"A clean Wayland compositor experience for macOS, iOS, and Android.";
+    [alert addButtonWithTitle:@"Continue"];
+    [alert runModal];
+    [prefs setHasSeenWelcome:YES];
+  }
+  [[WWNMachinesCoordinator sharedCoordinator] showMachinesWindowAndActivate:YES];
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
@@ -300,6 +312,10 @@ static void setup_signal_sources(void) {
 
 - (void)showPreferences:(id)sender {
   [[WWNPreferences sharedPreferences] showPreferences:sender];
+}
+
+- (void)showMachines:(id)sender {
+  [[WWNMachinesCoordinator sharedCoordinator] showMachinesWindowFromMenu:sender];
 }
 
 @end
@@ -365,6 +381,13 @@ int main(int argc, char *argv[]) {
                                    action:@selector(showPreferences:)
                             keyEquivalent:@","];
     [appMenu addItem:prefsItem];
+    NSMenuItem *machinesItem =
+        [[NSMenuItem alloc] initWithTitle:@"Machines..."
+                                   action:@selector(showMachines:)
+                            keyEquivalent:@"m"];
+    [machinesItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand |
+                                             NSEventModifierFlagShift];
+    [appMenu addItem:machinesItem];
     [appMenu addItem:[NSMenuItem separatorItem]];
 
     [appMenu addItem:[[NSMenuItem alloc]

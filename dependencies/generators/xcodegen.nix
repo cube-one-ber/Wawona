@@ -15,7 +15,7 @@
 let
   lib = pkgs.lib;
   strip = d: if d == null then "" else toString d;
-  xcodeUtils = import ../utils/xcode-wrapper.nix { inherit lib pkgs TEAM_ID; };
+  xcodeUtils = import ../apple/default.nix { inherit lib pkgs TEAM_ID; };
 
   # Dependency version strings (must match the tags/versions in dependencies/libs/*)
   depVersions = {
@@ -63,6 +63,8 @@ let
         MARKETING_VERSION = "0.1.0";
         CURRENT_PROJECT_VERSION = "1";
         CODE_SIGN_STYLE = "Automatic";
+        SWIFT_VERSION = "5.0";
+        SWIFT_OBJC_BRIDGING_HEADER = "src/platform/macos/WWN-Bridging-Header.h";
         CLANG_ENABLE_MODULES = "YES";
         CLANG_ENABLE_OBJC_ARC = "YES";
         ENABLE_BITCODE = "NO";
@@ -76,6 +78,7 @@ let
           "${strip (iosDeps.xkbcommon or null)}/include"
           "$(SRCROOT)/src"
           "$(SRCROOT)/src/platform/macos/ui"
+          "$(SRCROOT)/src/platform/macos/ui/Machines"
           "$(SRCROOT)/src/platform/macos/ui/Helpers"
           "$(SRCROOT)/src/platform/macos/ui/Settings"
           "$(SRCROOT)/src/extensions"
@@ -103,6 +106,7 @@ let
           }
           { path = "src/platform/macos/main.m"; }
           { path = "src/platform/ios"; excludes = commonExcludes; }
+          { path = "src/platform/macos/ui/Machines"; excludes = commonExcludes; }
           { path = "src/platform/macos/ui/Settings"; excludes = commonExcludes; }
           { path = "src/platform/macos/ui/Helpers"; excludes = commonExcludes; }
           { path = "src/resources/Wawona.icon"; type = "folder"; }
@@ -310,6 +314,7 @@ let
               "${strip (iosDeps.xkbcommon or null)}/include"
               "$(SRCROOT)/src"
               "$(SRCROOT)/src/platform/macos/ui"
+              "$(SRCROOT)/src/platform/macos/ui/Machines"
               "$(SRCROOT)/src/platform/macos/ui/Helpers"
               "$(SRCROOT)/src/platform/macos/ui/Settings"
               "$(SRCROOT)/src/platform/macos"
