@@ -120,6 +120,15 @@ let
           { path = "src/resources/wayland.png"; type = "file"; }
           { path = "src/resources/Wawona-iOS-Dark-1024x1024@1x.png"; type = "file"; }
         ];
+        preBuildScripts = [
+          {
+            path = preBuildScript;
+            name = "Build Rust Backend via Nix";
+            basedOnDependencyAnalysis = false;
+            outputFiles = [ "$(BUILT_PRODUCTS_DIR)/libwawona.a" ];
+          }
+        ];
+
         settings = {
           base = {
             INFOPLIST_FILE = "src/resources/app-bundle/Info.plist";
@@ -272,6 +281,14 @@ let
           { path = "src/resources/wayland.png"; type = "file"; }
           { path = "src/resources/Wawona-iOS-Dark-1024x1024@1x.png"; type = "file"; }
           { path = "src/resources/macos"; type = "folder"; }
+        ];
+        preBuildScripts = [
+          {
+            path = preBuildScript;
+            name = "Build Rust Backend via Nix";
+            basedOnDependencyAnalysis = false;
+            outputFiles = [ "$(BUILT_PRODUCTS_DIR)/libwawona.a" ];
+          }
         ];
         postBuildScripts = [
           {

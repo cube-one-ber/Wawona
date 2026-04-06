@@ -176,6 +176,17 @@ let
       echo "[Wawona] Using Nix-packaged Android SDK at $ANDROID_SDK_ROOT"
     fi
 
+
+    DEBUG_MODE=false
+    TEST_MODE=false
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --debug) DEBUG_MODE=true; shift ;;
+        --test) TEST_MODE=true; shift ;;
+        *) break ;;
+      esac
+    done
+
     APK_PATH="$1"
     if [ -z "$APK_PATH" ]; then
       APK_PATH="$(dirname "$0")/Wawona.apk"

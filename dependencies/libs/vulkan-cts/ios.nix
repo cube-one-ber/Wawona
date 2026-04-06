@@ -73,6 +73,12 @@ pkgs.stdenv.mkDerivation (finalAttrs: {
         export XCODE_APP
         export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
         export SDKROOT="$DEVELOPER_DIR/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk"
+        
+        # Ensure it exists
+        if [ ! -d "$SDKROOT" ]; then
+           # Trigger the auto-provisioner
+           SDKROOT=$(${xcodeUtils.ensureIosSimSDK}/bin/ensure-ios-sim-sdk)
+        fi
       fi
     }
 

@@ -20,6 +20,9 @@ pkgs.stdenv.mkDerivation (finalAttrs: {
 
   src = common.src;
 
+  # Allow access to SDKs
+  __noChroot = true;
+
   prePatch = common.prePatch;
 
   nativeBuildInputs = with buildPackages; [

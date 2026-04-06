@@ -150,6 +150,7 @@ pkgs.stdenv.mkDerivation {
         fi
   '';
 
+  MACOS_SDK = "/System/Library/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
   preConfigure = ''
     # Robust SDK detection using xcrun (gold standard for modern macOS)
     MACOS_SDK=$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)
@@ -169,6 +170,11 @@ pkgs.stdenv.mkDerivation {
       # Fallback 4: Global xcode-select
       MACOS_SDK=$(/usr/bin/xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
     fi
+    if [ ! -d "$MACOS_SDK" ]; then
+      MACOS_SDK=$(/usr/bin/xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+    fi
+    export SDKROOT="$MACOS_SDK"
+    export MACOSX_DEPLOYMENT_TARGET="26.0"
 
     if [ ! -d "$MACOS_SDK" ]; then
       echo "ERROR: MacOSX SDK not found. Build cannot proceed." >&2
