@@ -1,0 +1,31 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Push a new beta build to TestFlight"
+  lane :beta do
+    # 1. Authenticate via API key (from ENV)
+    # The API key should be generated in App Store Connect
+    app_store_connect_api_key(
+      key_id:     ENV["ASC_KEY_ID"],
+      issuer_id:  ENV["ASC_ISSUER_ID"],
+      key_content: ENV["ASC_KEY_CONTENT"],
+      in_house:    false
+    )
+
+    # 2. Build the app using Wawona’s Nix targets
+    # This requires TEAM_ID to be set in the environment and --impure
+    UI.message("Building IPA via Nix...")
+    sh("nix build .#wawona-ios-ipa --impure")
+
+    # 3. Find the IPA in the Nix result directory
+    ipa = sh("find result -name '*.ipa' | head -n1").strip
+    UI.user_error!("IPA not found in result/") if ipa.empty?
+    UI.success("Built IPA at #{ipa}")
+
+    # 4. Upload to TestFlight
+    upload_to_testflight(
+      ipa: ipa,
+      skip_waiting_for_build_processing: true
+    )
+  end
+end
