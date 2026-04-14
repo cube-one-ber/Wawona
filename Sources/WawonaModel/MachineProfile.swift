@@ -9,6 +9,30 @@ public enum MachineType: String, Codable, CaseIterable, Sendable {
     case container
 }
 
+extension MachineType {
+    /// Human-readable type name for pickers and lists (matches macOS editor wording; not the storage `rawValue`).
+    public var userFacingName: String {
+        switch self {
+        case .native: return "Native"
+        case .sshWaypipe: return "SSH + Waypipe"
+        case .sshTerminal: return "SSH Terminal"
+        case .virtualMachine: return "Virtual Machine"
+        case .container: return "Container"
+        }
+    }
+
+    /// SF Symbol name for this machine type (shared across iOS, watchOS, Skip/Android).
+    public var symbolName: String {
+        switch self {
+        case .native: return "desktopcomputer"
+        case .sshWaypipe: return "network"
+        case .sshTerminal: return "terminal"
+        case .virtualMachine: return "cube"
+        case .container: return "shippingbox"
+        }
+    }
+}
+
 public enum MachineStatus: String, Codable, CaseIterable, Sendable {
     case disconnected
     case connecting

@@ -6,8 +6,9 @@ struct MachineSettingsView: View {
     @ObservedObject var profileStore: MachineProfileStore
     var machineID: String?
 
-    @State private var selectedID: String?
-    @State private var draft: MachineProfile?
+    // internal: Skip Fuse native bridging requires non-private @State for Android.
+    @State var selectedID: String?
+    @State var draft: MachineProfile?
 
     var body: some View {
         Form {
@@ -51,7 +52,7 @@ struct MachineSettingsView: View {
             TextField("Name", text: nameBinding)
             Picker("Type", selection: typeBinding) {
                 ForEach(MachineType.allCases, id: \.self) { t in
-                    Text(t.rawValue).tag(t)
+                    Text(t.userFacingName).tag(t)
                 }
             }
 

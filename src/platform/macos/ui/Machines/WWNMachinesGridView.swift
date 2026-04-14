@@ -6,7 +6,6 @@ struct WWNMachinesGridView: View {
 
   @StateObject private var model = WWNMachinesViewModel()
   @State private var editingProfile: WWNMachineProfile?
-  @State private var isEditing = false
   @State private var isCreating = false
   @State private var searchQuery = ""
   #if os(iOS)
@@ -14,6 +13,34 @@ struct WWNMachinesGridView: View {
   #endif
 
   var body: some View {
+    #if os(macOS)
+    applyMacChromeFixes(
+      to: splitView
+        .sheet(isPresented: $isCreating) {
+          WWNMachineEditorView(
+            title: "Add Machine Profile",
+            initial: nil,
+            defaultType: model.selectedFilter.defaultMachineType
+          ) { profile in
+            model.upsert(profile)
+          }
+          #if os(iOS)
+          .presentationDetents([.medium, .large])
+          .presentationContentInteraction(.scrolls)
+          #endif
+        }
+        .sheet(item: $editingProfile) { profile in
+          WWNMachineEditorView(title: "Edit Machine Profile", initial: profile) { updated in
+            model.upsert(updated)
+          }
+          #if os(iOS)
+          .presentationDetents([.medium, .large])
+          .presentationContentInteraction(.scrolls)
+          #endif
+        }
+        .animation(.spring(duration: 0.42, bounce: 0.26), value: visibleProfiles.count)
+    )
+    #else
     splitView
       .sheet(isPresented: $isCreating) {
         WWNMachineEditorView(
@@ -28,9 +55,9 @@ struct WWNMachinesGridView: View {
         .presentationContentInteraction(.scrolls)
         #endif
       }
-      .sheet(isPresented: $isEditing) {
-        WWNMachineEditorView(title: "Edit Machine Profile", initial: editingProfile) { profile in
-          model.upsert(profile)
+      .sheet(item: $editingProfile) { profile in
+        WWNMachineEditorView(title: "Edit Machine Profile", initial: profile) { updated in
+          model.upsert(updated)
         }
         #if os(iOS)
         .presentationDetents([.medium, .large])
@@ -38,6 +65,7 @@ struct WWNMachinesGridView: View {
         #endif
       }
       .animation(.spring(duration: 0.42, bounce: 0.26), value: visibleProfiles.count)
+    #endif
   }
 
   @ViewBuilder
@@ -59,64 +87,99 @@ struct WWNMachinesGridView: View {
 
   private var detailContent: some View {
     detailPane
-      .navigationTitle("Machine Configuration")
+      .navigationTitle(detailNavigationTitle)
+      #if os(iOS)
       .toolbar {
-        ToolbarItem(placement: .primaryAction) {
-          Button {
-            isCreating = true
-          } label: {
-            Label("Add Profile", systemImage: "plus")
-          }
-        }
-        if let onOpenSettings {
-          ToolbarItem(placement: .automatic) {
-            Button("Settings", action: onOpenSettings)
-          }
-        }
+        detailToolbarContent
       }
+      #endif
+  }
+
+  private var detailNavigationTitle: String {
+    #if os(macOS)
+    // Short title prevents clipping when sidebar is expanded and toolbar is populated.
+    return "Machines"
+    #else
+    return "Machine Configuration"
+    #endif
+  }
+
+  @ToolbarContentBuilder
+  private var detailToolbarContent: some ToolbarContent {
+    #if os(macOS)
+    ToolbarItem(placement: .primaryAction) {
+      Button {
+        isCreating = true
+      } label: {
+        Label("Add", systemImage: "plus")
+      }
+    }
+    if let onOpenSettings {
+      ToolbarItem(placement: .secondaryAction) {
+        Button("Settings", action: onOpenSettings)
+      }
+    }
+    #else
+    ToolbarItem(placement: .primaryAction) {
+      Button {
+        isCreating = true
+      } label: {
+        Label("Add Profile", systemImage: "plus")
+      }
+    }
+    if let onOpenSettings {
+      ToolbarItem(placement: .automatic) {
+        Button("Settings", action: onOpenSettings)
+      }
+    }
+    #endif
   }
 
   // MARK: - Sidebar
 
   private var sidebar: some View {
-    List {
-      Section("Machine Scope") {
-        ForEach(WWNMachineFilter.allCases) { filter in
-          sidebarFilterRow(filter)
+    Group {
+      #if os(macOS)
+      List(selection: macSidebarSelection) {
+        Section("Machine Scope") {
+          ForEach(WWNMachineFilter.allCases) { filter in
+            Label(filter.rawValue, systemImage: filterIcon(filter))
+              .tag(filter)
+          }
         }
       }
-      Section("Overview") {
-        sidebarOverviewRow(
-          title: "Profiles",
-          value: "\(model.profiles.count)",
-          icon: "square.grid.2x2",
-          targetFilter: .all
-        )
-        sidebarOverviewRow(
-          title: "Connected",
-          value: "\(model.connectedCount)",
-          icon: "wave.3.right.circle",
-          targetFilter: .remote
-        )
-        sidebarOverviewRow(
-          title: "Ready",
-          value: "\(model.launchableCount)",
-          icon: "play.circle",
-          targetFilter: .local
-        )
+      .listStyle(.sidebar)
+      .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 320)
+      #else
+      List {
+        Section("Machine Scope") {
+          ForEach(WWNMachineFilter.allCases) { filter in
+            sidebarFilterRow(filter)
+          }
+        }
       }
+      .listStyle(.insetGrouped)
+      #endif
     }
-    #if os(iOS)
-    .listStyle(.insetGrouped)
-    #else
-    .listStyle(.sidebar)
-    #endif
     .navigationTitle("Control Panel")
   }
 
+  #if os(macOS)
+  private var macSidebarSelection: Binding<WWNMachineFilter?> {
+    Binding(
+      get: { model.selectedFilter },
+      set: { selected in
+        guard let selected, selected != model.selectedFilter else { return }
+        withAnimation(.easeInOut(duration: 0.2)) {
+          model.selectedFilter = selected
+        }
+      }
+    )
+  }
+  #endif
+
   @ViewBuilder
   private func sidebarFilterRow(_ filter: WWNMachineFilter) -> some View {
-    let isSelected = model.selectedFilter == filter
     Button {
       withAnimation(.easeInOut(duration: 0.2)) {
         model.selectedFilter = filter
@@ -125,46 +188,9 @@ struct WWNMachinesGridView: View {
       preferredColumn = .detail
       #endif
     } label: {
-      HStack {
-        Label(filter.rawValue, systemImage: filterIcon(filter))
-          .foregroundStyle(isSelected ? Color.accentColor : .primary)
-        Spacer()
-        if isSelected {
-          Image(systemName: "checkmark")
-            .font(.caption.weight(.bold))
-            .foregroundStyle(Color.accentColor)
-        }
-      }
-      .contentShape(Rectangle())
+      Label(filter.rawValue, systemImage: filterIcon(filter))
+        .contentShape(Rectangle())
     }
-    .buttonStyle(.plain)
-    .listRowBackground(
-      RoundedRectangle(cornerRadius: 6, style: .continuous)
-        .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
-        .padding(.horizontal, 4)
-    )
-  }
-
-  @ViewBuilder
-  private func sidebarOverviewRow(title: String, value: String, icon: String, targetFilter: WWNMachineFilter) -> some View {
-    Button {
-      withAnimation(.easeInOut(duration: 0.2)) {
-        model.selectedFilter = targetFilter
-      }
-      #if os(iOS)
-      preferredColumn = .detail
-      #endif
-    } label: {
-      HStack {
-        Label(title, systemImage: icon)
-        Spacer()
-        Text(value)
-          .fontWeight(.semibold)
-          .foregroundStyle(.secondary)
-      }
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
   }
 
   // MARK: - Detail
@@ -192,6 +218,7 @@ struct WWNMachinesGridView: View {
                 WWNMachineCardView(
                   profile: profile,
                   status: machineStatus,
+                  thumbnailImage: model.thumbnailImage(for: profile),
                   typeLabel: model.machineTypeLabel(for: profile),
                   scopeLabel: model.machineScopeLabel(for: profile),
                   subtitle: model.machineSubtitle(for: profile),
@@ -201,7 +228,6 @@ struct WWNMachinesGridView: View {
                   isRunning: machineStatus == .connected || machineStatus == .connecting,
                   onEdit: {
                     editingProfile = profile
-                    isEditing = true
                   },
                   onDelete: { model.delete(profile) },
                   onConnect: {
@@ -209,7 +235,8 @@ struct WWNMachinesGridView: View {
                       onConnect?()
                     }
                   },
-                  onStop: { model.disconnect(profile) }
+                  onStop: { model.disconnect(profile) },
+                  onFocus: { model.focusRunningMachine(profile) }
                 )
                 .transition(.scale(scale: 0.95).combined(with: .opacity))
               }
@@ -220,6 +247,10 @@ struct WWNMachinesGridView: View {
         .frame(maxWidth: 1320, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .topLeading)
       }
+      #if os(macOS)
+      // Keep content out of the titlebar zone even if AppKit briefly toggles unified chrome.
+      .safeAreaPadding(.top, 6)
+      #endif
     }
   }
 
@@ -230,7 +261,13 @@ struct WWNMachinesGridView: View {
     #if os(iOS)
     minCardWidth = width < 720 ? max(width - 32, 280) : 320
     #else
-    minCardWidth = width < 980 ? max(width - 40, 320) : 360
+    // Prefer a card grid sooner on macOS so ~1000px windows don't feel like a list.
+    let availableWidth = width - 32
+    if availableWidth >= 680 {
+      minCardWidth = 300
+    } else {
+      minCardWidth = max(availableWidth, 320)
+    }
     #endif
     return [GridItem(.adaptive(minimum: minCardWidth), spacing: 14)]
   }
@@ -279,35 +316,8 @@ struct WWNMachinesGridView: View {
   // MARK: - Search / Filter Bar
 
   private var searchAndLayoutBar: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      TextField("Search machines, hosts, or type", text: $searchQuery)
-        .textFieldStyle(.roundedBorder)
-      filterPicker
-    }
-  }
-
-  private var filterPicker: some View {
-    ViewThatFits(in: .horizontal) {
-      HStack(spacing: 12) {
-        Picker("Scope", selection: $model.selectedFilter) {
-          ForEach(WWNMachineFilter.allCases) { filter in
-            Text(filter.rawValue).tag(filter)
-          }
-        }
-        .pickerStyle(.segmented)
-      }
-      VStack(alignment: .leading, spacing: 8) {
-        Text("Scope")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        Picker("Scope", selection: $model.selectedFilter) {
-          ForEach(WWNMachineFilter.allCases) { filter in
-            Text(filter.rawValue).tag(filter)
-          }
-        }
-        .pickerStyle(.menu)
-      }
-    }
+    TextField("Search machines or hosts", text: $searchQuery)
+      .textFieldStyle(.roundedBorder)
   }
 
   // MARK: - Helpers
@@ -330,6 +340,25 @@ struct WWNMachinesGridView: View {
     case .remote: return "network"
     }
   }
+
+  #if os(macOS)
+  @ViewBuilder
+  private func applyMacChromeFixes<V: View>(to view: V) -> some View {
+    if #available(macOS 13.0, *) {
+      view
+        .toolbarBackground(.visible, for: .windowToolbar)
+        .toolbarBackground(Color(nsColor: .windowBackgroundColor), for: .windowToolbar)
+        .background(WWNWindowChromeGuard())
+    } else {
+      view
+        .background(WWNWindowChromeGuard())
+    }
+  }
+  #endif
+}
+
+extension WWNMachineProfile: Identifiable {
+  public var id: String { machineId }
 }
 
 // MARK: - iOS Hosting Bridge
@@ -373,11 +402,47 @@ final class WWNMachinesHostingBridge: NSObject {
       defer: false
     )
     window.minSize = NSSize(width: 1024, height: 720)
+    window.styleMask.remove(.fullSizeContentView)
+    window.titlebarAppearsTransparent = false
+    window.titleVisibility = .visible
+    if #available(macOS 11.0, *) {
+      window.toolbarStyle = .automatic
+    }
     window.center()
     window.contentViewController = hosting
     window.title = "Wawona Machine Control Panel"
     window.isRestorable = false
     return NSWindowController(window: window)
+  }
+}
+
+private struct WWNWindowChromeGuard: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView(frame: .zero)
+    DispatchQueue.main.async {
+      configureWindow(for: view)
+    }
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {
+    DispatchQueue.main.async {
+      configureWindow(for: nsView)
+    }
+  }
+
+  private func configureWindow(for view: NSView) {
+    guard let window = view.window else { return }
+    window.styleMask.remove(.fullSizeContentView)
+    window.titlebarAppearsTransparent = false
+    window.titleVisibility = .visible
+    window.isOpaque = true
+    window.backgroundColor = .windowBackgroundColor
+    window.contentView?.wantsLayer = true
+    window.contentView?.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    if #available(macOS 11.0, *) {
+      window.toolbarStyle = .automatic
+    }
   }
 }
 #endif

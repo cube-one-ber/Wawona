@@ -5,6 +5,7 @@ struct MachineCardView: View {
     let profile: MachineProfile
     let status: MachineStatus
     let onConnect: () -> Void
+    let onEdit: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -37,6 +38,7 @@ struct MachineCardView: View {
 
                 HStack {
                     Button("Connect", action: onConnect)
+                    Button("Edit", action: onEdit)
                     Button("Delete", role: .destructive, action: onDelete)
                 }
             }

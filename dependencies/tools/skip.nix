@@ -35,6 +35,9 @@ stdenv.mkDerivation rec {
   pname = "skip";
   inherit version;
 
+  # Darwin fixup hooks invoke GNU find -printf / cut -z (not in BSD userland).
+  dontFixup = stdenv.isDarwin;
+
   src = fetchFromGitHub {
     owner = "skiptools";
     repo = "skipstone";
@@ -42,7 +45,11 @@ stdenv.mkDerivation rec {
     sha256 = "sha256-bq3Uk30DQ2ErtF/4PYSTAjIuIQ2gm+kG/pyKKr5W/sQ=";
   };
 
-  nativeBuildInputs = [ swift cacert makeWrapper ] ++ lib.optionals (swiftpm != null) [ swiftpm ];
+  # Linux: Nix Swift + SwiftPM. Darwin: SkipRunner must link the *same* Swift as Xcode's swiftc
+  # (used during `skip export`), or dyld loads Nix + Apple libswift_* and manifest compile fails.
+  nativeBuildInputs =
+    [ cacert makeWrapper ]
+    ++ lib.optionals stdenv.isLinux ([ swift ] ++ lib.optionals (swiftpm != null) [ swiftpm ]);
 
   buildInputs =
     [
@@ -66,6 +73,23 @@ stdenv.mkDerivation rec {
   NIX_SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";
 
   buildPhase = ''
+    ${lib.optionalString stdenv.isDarwin ''
+    # Before any hook: SwiftPM otherwise uses /var/empty (non-writable) for caches.
+    export HOME="$TMPDIR"
+    # Darwin stdenv often sets DEVELOPER_DIR to nixpkgs apple-sdk (no Swift); use real Xcode.
+    case "''${DEVELOPER_DIR:-}" in
+      ""|/nix/store/*) export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ;;
+    esac
+    _swift_tc="''${DEVELOPER_DIR}/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+    if [ ! -x "$_swift_tc/swift" ]; then
+      echo "error: skip on Darwin must be built with Xcode Swift (expected $_swift_tc/swift)." >&2
+      echo "Install Xcode or set DEVELOPER_DIR; if the Nix sandbox blocks /Applications, use:" >&2
+      echo "  nix build --option sandbox relaxed .#skip" >&2
+      exit 1
+    fi
+    export PATH="${lib.makeBinPath [ git curl javaRuntime ]}:$_swift_tc:/usr/bin:/bin"
+    export SDKROOT="$(PATH="$_swift_tc:/usr/bin:/bin" DEVELOPER_DIR="$DEVELOPER_DIR" xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
+    ''}
     runHook preBuild
     swift build \
       ${lib.optionalString stdenv.isDarwin "--disable-sandbox"} \
@@ -77,9 +101,18 @@ stdenv.mkDerivation rec {
 
   installPhase = ''
     runHook preInstall
-    install -Dm755 .build/release/SkipRunner "$out/bin/skip"
+    mkdir -p "$out/bin"
+    # Darwin: coreutils `install` has mis-resolved destinations in some stdenvs; cp is reliable.
+    cp -p .build/release/SkipRunner "$out/bin/skip"
+    chmod 755 "$out/bin/skip"
+    ${if stdenv.isDarwin then ''
+    wrapProgram "$out/bin/skip" \
+      --prefix PATH : "${runtimePath}" \
+      --run 'unset DYLD_FALLBACK_LIBRARY_PATH DYLD_LIBRARY_PATH DYLD_INSERT_LIBRARIES DYLD_FRAMEWORK_PATH'
+    '' else ''
     wrapProgram "$out/bin/skip" \
       --prefix PATH : "${runtimePath}"
+    ''}
     runHook postInstall
   '';
 

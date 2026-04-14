@@ -689,6 +689,10 @@ GEN_HEADER
             if [ -f "${foot}/bin/foot" ]; then
               cp "${foot}/bin/foot" $out/Applications/Wawona.app/Contents/Resources/bin/
               chmod +x $out/Applications/Wawona.app/Contents/Resources/bin/foot
+              if [ -f "${foot}/bin/.foot-wrapped" ]; then
+                cp "${foot}/bin/.foot-wrapped" $out/Applications/Wawona.app/Contents/Resources/bin/
+                chmod +x $out/Applications/Wawona.app/Contents/Resources/bin/.foot-wrapped
+              fi
               echo "DEBUG: Bundled foot terminal"
             else
               echo "Warning: foot binary not found at ${foot}/bin/foot"

@@ -222,3 +222,83 @@ pub fn notify_output_change_for_client(
 
     crate::core::wayland::xdg::xdg_output::notify_xdg_output_change_for_client(state, client_id);
 }
+
+/// Build an [`OutputState`] view with overridden logical size and scale for protocol
+/// emission, matching [`CompositorState::set_output_size`] mm / mode semantics.
+///
+/// Does **not** mutate compositor state — used so one client can receive a
+/// per-window `wl_output.mode` without rewriting the global primary output
+/// (which would desync every other session).
+fn output_state_view_for_dimensions(
+    base: &OutputState,
+    width: u32,
+    height: u32,
+    scale: f32,
+) -> OutputState {
+    let mut view = base.clone();
+    let safe_scale = if scale < 1.0 { 1.0 } else { scale };
+    let safe_width = if width == 0 { 1920 } else { width };
+    let safe_height = if height == 0 { 1080 } else { height };
+
+    view.width = safe_width;
+    view.height = safe_height;
+    view.scale = safe_scale;
+    view.physical_width = ((safe_width as f32 / safe_scale) / 96.0 * 25.4) as u32;
+    view.physical_height = ((safe_height as f32 / safe_scale) / 96.0 * 25.4) as u32;
+
+    if let Some(mode) = view.modes.get_mut(0) {
+        mode.width = safe_width;
+        mode.height = safe_height;
+    }
+    view.usable_area = crate::util::geometry::Rect::new(0, 0, safe_width, safe_height);
+    view
+}
+
+/// Like [`notify_output_change_for_client`], but sends the given logical size + scale
+/// to that client's `wl_output` / `xdg_output` only, without reading dimensions from
+/// [`CompositorState::outputs`].
+pub fn notify_output_change_for_client_override(
+    state: &CompositorState,
+    output_id: u32,
+    client_id: &wayland_server::backend::ClientId,
+    width: u32,
+    height: u32,
+    scale: f32,
+) {
+    let base = match state.outputs.iter().find(|o| o.id == output_id) {
+        Some(o) => o,
+        None => {
+            tracing::warn!("notify_output_change_for_client_override: output {} not found", output_id);
+            return;
+        }
+    };
+
+    let view = output_state_view_for_dimensions(base, width, height, scale);
+
+    let mut notified = 0;
+    for (_obj_id, output_res) in &state.output_resources {
+        if !output_res.is_alive() {
+            continue;
+        }
+        if let Some(client) = output_res.client() {
+            if client.id() == *client_id {
+                send_output_info(output_res, &view);
+                notified += 1;
+            }
+        }
+    }
+
+    tracing::debug!(
+        "Notified {} output resources for client {:?} of output {} override ({}x{} @ {}x)",
+        notified,
+        client_id,
+        output_id,
+        view.width,
+        view.height,
+        view.scale
+    );
+
+    crate::core::wayland::xdg::xdg_output::notify_xdg_output_change_for_client_override(
+        state, client_id, &view,
+    );
+}

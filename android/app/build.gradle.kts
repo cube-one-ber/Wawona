@@ -7,9 +7,13 @@ plugins {
 }
 
 val skipArtifactsDir = File(
-    System.getenv("SKIP_ARTIFACTS_DIR") ?: rootProject.file("android/Skip").path
+    System.getenv("SKIP_ARTIFACTS_DIR") ?: rootProject.file("Skip").path
 )
-val skipRoots = listOf(skipArtifactsDir)
+val skipRoots = buildList {
+    add(skipArtifactsDir)
+    // Legacy path used by older Nix wrappers; keep as non-primary fallback.
+    add(rootProject.file("android/Skip"))
+}.distinctBy { it.canonicalPath }
 
 // Match Skip skipstone (`androidx.compose:compose-bom:2026.03.00` → Compose 1.10.5, material3-android 1.4.0).
 val composeBom = "2026.03.00"

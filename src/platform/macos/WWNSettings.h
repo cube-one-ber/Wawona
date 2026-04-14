@@ -25,8 +25,6 @@ bool WWNSettings_GetUseMetal4ForNested(void);
 // Input
 bool WWNSettings_GetRenderMacOSPointer(void);
 bool WWNSettings_GetSwapCmdAsCtrl(void);
-bool WWNSettings_GetEnableTextAssist(void);
-bool WWNSettings_GetEnableDictation(void);
 
 // Client Management
 bool WWNSettings_GetMultipleClientsEnabled(void);
@@ -83,9 +81,6 @@ typedef struct {
   // Graphics driver dropdown selection (Settings > Graphics > Drivers)
   char vulkanDriver[32]; // "none", "swiftshader", "turnip", "system"
   char openglDriver[32]; // "none", "angle", "system"
-  // Text Assist
-  bool enableTextAssist;
-  bool enableDictation;
 } WWNSettingsConfig;
 
 void WWNSettings_UpdateConfig(const WWNSettingsConfig *config);

@@ -449,18 +449,7 @@ static UIImage *WWNAboutLogo(void) {
     ITEM(@"Swap CMD with ALT", @"SwapCmdWithAlt", WSettingSwitch, @YES,
          @"Swaps Command and Alt keys."),
     ITEM(@"Universal Clipboard", @"UniversalClipboard", WSettingSwitch, @YES,
-         @"Syncs clipboard with macOS."),
-    // --- Text Assist divider ---
-    ITEM(@"Text Assist", nil, WSettingInfo, nil,
-         @"Autocorrection, text suggestions, and dictation for Wayland "
-         @"clients."),
-    ITEM(@"Enable Text Assist", @"EnableTextAssist", WSettingSwitch, @NO,
-         @"Enables autocorrect, text suggestions, smart punctuation, "
-         @"swipe-to-type, and text replacements powered by the native "
-         @"platform keyboard."),
-    ITEM(@"Enable Dictation", @"EnableDictation", WSettingSwitch, @NO,
-         @"Enables voice dictation input. Spoken text is transcribed and "
-         @"sent to the focused Wayland client.")
+         @"Syncs clipboard with macOS.")
   ];
   [sects addObject:input];
 
@@ -578,6 +567,9 @@ static UIImage *WWNAboutLogo(void) {
   machines.iconColor = [NSColor systemCyanColor];
 #endif
   machines.items = @[
+    ITEM(@"Session Thumbnails", @"MachineSessionThumbnailsEnabled",
+         WSettingSwitch, @YES,
+         @"Save the last frame from a machine session and show it on machine cards."),
     ITEM(@"Virtual Machine Provider", @"MachineVMProviderStub", WSettingText,
          @"utm-se", @"Stub setting for future VM integration."),
     ITEM(@"Virtual Machine VSock Port", @"MachineVMDefaultVsockStub",
@@ -612,17 +604,6 @@ static UIImage *WWNAboutLogo(void) {
     [weakSelf previewWaypipeCommand];
   };
 
-  WWNSettingItem *stopBtn =
-      ITEM(@"Stop Waypipe", @"WaypipeStop", WSettingButton, nil,
-           @"Stop the running waypipe session.");
-  stopBtn.actionBlock = ^{
-    [[WWNWaypipeRunner sharedRunner] stopWaypipe];
-#if TARGET_OS_IPHONE
-    [weakSelf presentSafeAlertWithTitle:@"Waypipe"
-                                message:@"Waypipe has been stopped."];
-#endif
-  };
-
   WWNSettingItem *compressItem =
       ITEM(@"Compression", @"WaypipeCompress", WSettingPopup, @"lz4",
            @"Compression method.");
@@ -643,7 +624,8 @@ static UIImage *WWNAboutLogo(void) {
 
   waypipe.items = @[
     ITEM(@"Waypipe", nil, WSettingInfo, [self getWaypipeVersion],
-         @"Remote Wayland display proxy."),
+         @"Global defaults for all machines. Per-machine Waypipe settings "
+         @"override these values."),
     ITEM(@"Local IP", nil, WSettingInfo, [self localIPAddress], nil),
     ITEM(@"Display Number", @"WaylandDisplayNumber", WSettingNumber, @0,
          @"Display number for socket and waypipe (e.g., 0 = wayland-0)."),
@@ -685,8 +667,7 @@ static UIImage *WWNAboutLogo(void) {
          @"(e.g., \"system_u:system_r:waypipe_t:s0\"). Only needed if SELinux "
          @"is enabled on the remote system. Leave empty to use default "
          @"context."),
-    previewBtn,
-    stopBtn
+    previewBtn
   ];
   [sects addObject:waypipe];
 

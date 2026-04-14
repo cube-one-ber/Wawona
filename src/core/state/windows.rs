@@ -27,50 +27,29 @@ impl CompositorState {
     
     /// Re-configure a window to ensure it updates its decoration mode.
     pub fn reconfigure_window_decorations(&mut self, window_id: u32) {
-        let mut surface_res = None;
-        let mut toplevel_res = None;
-        let mut internal_surface_id = 0;
-        let mut current_states = Vec::new();
-        
-        for ((client_id, _), tl) in self.xdg.toplevels.iter() {
-            if tl.window_id == window_id {
-                internal_surface_id = tl.surface_id;
-                toplevel_res = tl.resource.clone();
-                
-                if tl.activated {
-                    use crate::core::wayland::protocol::server::xdg::shell::server::xdg_toplevel::State;
-                    current_states.push(State::Activated);
-                }
-                
-                if internal_surface_id != 0 {
-                    if let Some(surf) = self.xdg.surfaces.get(&(client_id.clone(), internal_surface_id)) {
-                        surface_res = surf.resource.clone();
-                    }
-                }
-                break;
-            }
-        }
-        
-        if let Some(tl) = toplevel_res {
+        let target_toplevel = self
+            .xdg
+            .toplevels
+            .iter()
+            .find(|(_, tl)| tl.window_id == window_id)
+            .map(|(key, _)| key.clone());
+
+        if let Some((client_id, toplevel_id)) = target_toplevel {
             let (width, height) = if let Some(window) = self.windows.get(&window_id) {
                 let window = window.read().unwrap();
-                (window.width as i32, window.height as i32)
+                (window.width.max(0) as u32, window.height.max(0) as u32)
             } else {
                 (0, 0)
             };
-            
-            let mut states_bytes = Vec::new();
-            for state in current_states {
-                let val = state as u32;
-                states_bytes.extend_from_slice(&val.to_ne_bytes());
-            }
-            tl.configure(width, height, states_bytes);
-            
-            if let Some(surf) = surface_res {
-                let serial = self.next_serial();
-                surf.configure(serial);
-                crate::wlog!(crate::util::logging::COMPOSITOR, "Sent full configure sequence (serial={}, size={}x{}) to window {} for decoration update", serial, width, height, window_id);
-            }
+            let serial = self.send_toplevel_configure(client_id, toplevel_id, width, height);
+            crate::wlog!(
+                crate::util::logging::COMPOSITOR,
+                "Reconfigured decorations via unified configure gateway (window={} serial={} size={}x{})",
+                window_id,
+                serial,
+                width,
+                height
+            );
         }
     }
 

@@ -91,6 +91,9 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
                     if let Some(surface_data) = state.xdg.surfaces.get_mut(&(client_id.clone(), xdg_surface_id)) {
                         surface_data.pending_serial = serial;
                     }
+                    if let Some(toplevel_data) = state.xdg.toplevels.get_mut(&(client_id.clone(), toplevel.id().protocol_id())) {
+                        toplevel_data.pending_serial = serial;
+                    }
                     resource.configure(serial);
                     
                     // Set surface role
@@ -239,11 +242,21 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
                 crate::wlog!(crate::util::logging::COMPOSITOR, "Client acked configure serial {}", serial);
                 if let Some(data) = data {
                     if let Some(surface_data) = state.xdg.surfaces.get_mut(&(client_id.clone(), xdg_surface_id)) {
-                        surface_data.configured = true;
-                        // Clear pending only when the latest serial is acked;
-                        // older serials are valid per xdg-shell protocol.
+                        // Record progress for diagnostics; readiness is granted only on latest serial.
+                        if serial > surface_data.last_acked_serial {
+                            surface_data.last_acked_serial = serial;
+                        }
                         if serial == surface_data.pending_serial {
+                            surface_data.configured = true;
                             surface_data.pending_serial = 0;
+                        } else if surface_data.pending_serial != 0 {
+                            crate::wlog!(
+                                crate::util::logging::COMPOSITOR,
+                                "AckConfigure mismatch for xdg_surface {}: got serial={}, pending={}",
+                                xdg_surface_id,
+                                serial,
+                                surface_data.pending_serial
+                            );
                         }
                     }
 
@@ -265,6 +278,10 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for CompositorState {
                             if let Some(key) = to_finalize {
                                 let mut window = window.write().unwrap();
                                 if let Some(tl_data) = state.xdg.toplevels.get_mut(&key) {
+                                    if serial > tl_data.last_acked_serial {
+                                        tl_data.last_acked_serial = serial;
+                                    }
+                                    tl_data.pending_serial = 0;
                                     tl_data.maximized = tl_data.pending_maximized;
                                     tl_data.fullscreen = tl_data.pending_fullscreen;
                                     

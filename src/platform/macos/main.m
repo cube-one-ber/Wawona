@@ -432,6 +432,35 @@ int main(int argc, char *argv[]) {
     [appMenuItem setSubmenu:appMenu];
     [menubar addItem:appMenuItem];
 
+    // -- Edit Menu --
+    NSMenuItem *editMenuItem = [[NSMenuItem alloc] init];
+    NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Undo"
+                                                  action:@selector(undo:)
+                                           keyEquivalent:@"z"]];
+    NSMenuItem *redoItem =
+        [[NSMenuItem alloc] initWithTitle:@"Redo"
+                                   action:@selector(redo:)
+                            keyEquivalent:@"z"];
+    [redoItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand |
+                                             NSEventModifierFlagShift];
+    [editMenu addItem:redoItem];
+    [editMenu addItem:[NSMenuItem separatorItem]];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Cut"
+                                                  action:@selector(cut:)
+                                           keyEquivalent:@"x"]];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Copy"
+                                                  action:@selector(copy:)
+                                           keyEquivalent:@"c"]];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Paste"
+                                                  action:@selector(paste:)
+                                           keyEquivalent:@"v"]];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Select All"
+                                                  action:@selector(selectAll:)
+                                           keyEquivalent:@"a"]];
+    [editMenuItem setSubmenu:editMenu];
+    [menubar addItem:editMenuItem];
+
     // -- Window Menu --
     NSMenuItem *windowMenuItem = [[NSMenuItem alloc] init];
     NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];

@@ -116,6 +116,24 @@ impl CompositorState {
 
     /// Handle a surface commit request
     pub fn handle_surface_commit(&mut self, surface_id: u32) {
+        if let Some((_, xdg_surface_data)) = self
+            .xdg
+            .surfaces
+            .iter()
+            .find(|(_, data)| data.surface_id == surface_id)
+        {
+            if xdg_surface_data.pending_serial != 0 {
+                self.commit_before_ack_count = self.commit_before_ack_count.saturating_add(1);
+                crate::wlog!(
+                    crate::util::logging::STATE,
+                    "Commit arrived before latest ack: surface={} pending_serial={} count={}",
+                    surface_id,
+                    xdg_surface_data.pending_serial,
+                    self.commit_before_ack_count
+                );
+            }
+        }
+
         let is_sync = self.is_effectively_sync(surface_id);
         
         let release_id = if let Some(surface) = self.get_surface(surface_id) {

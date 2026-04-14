@@ -7,8 +7,8 @@ struct MachinesRootView: View {
     @ObservedObject var sessions: SessionOrchestrator
     var onPresentNativeCompositor: ((MachineSession) -> Void)?
     @State var search = ""
-    @State var selectedMachineId: String?
     @State var showingEditor = false
+    @State var editingProfile: MachineProfile?
 
     init(
         preferences: WawonaPreferences,
@@ -23,19 +23,13 @@ struct MachinesRootView: View {
     }
 
     var body: some View {
-        machinesNavigation
-    }
-
-    private var machinesNavigation: some View {
-        #if SKIP
-        // Skip maps `NavigationSplitView` to stubs; `AdaptiveNavigationView` only renders `detail`,
-        // so the sidebar list never appeared. Use a single column with a bar title like iOS phone.
         NavigationStack {
             ScrollView {
                 MachinesGridView(
                     profiles: filteredProfiles,
                     sessions: sessions,
                     onAdd: { showingEditor = true },
+                    onEdit: { editingProfile = $0 },
                     onConnect: connect,
                     onDelete: delete
                 )
@@ -48,34 +42,12 @@ struct MachinesRootView: View {
                     profileStore.upsert(profile)
                 }
             }
-        }
-        #else
-        AdaptiveNavigationView {
-            List(selection: $selectedMachineId) {
-                ForEach(filteredProfiles) { profile in
-                    Text(profile.name).tag(profile.id)
-                }
-            }
-            .navigationTitle("Machines")
-        } detail: {
-            ScrollView {
-                MachinesGridView(
-                    profiles: filteredProfiles,
-                    sessions: sessions,
-                    onAdd: { showingEditor = true },
-                    onConnect: connect,
-                    onDelete: delete
-                )
-                .padding()
-            }
-            .searchable(text: $search)
-            .sheet(isPresented: $showingEditor) {
-                MachineEditorView { profile in
-                    profileStore.upsert(profile)
+            .sheet(item: $editingProfile) { profile in
+                MachineEditorView(profile: profile) { updated in
+                    profileStore.upsert(updated)
                 }
             }
         }
-        #endif
     }
 
     private var filteredProfiles: [MachineProfile] {

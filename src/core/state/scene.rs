@@ -71,6 +71,7 @@ impl CompositorState {
             
             if let Some(surface_data) = self.xdg.surfaces.get_mut(&(client_id, xdg_surface_id)) {
                 surface_data.pending_serial = serial;
+                surface_data.configured = false;
                 if let Some(resource) = &surface_data.resource {
                     crate::wlog!(crate::util::logging::COMPOSITOR, "Actually sending xdg_surface.configure(serial={}) to xdg_surface_id={}", serial, xdg_surface_id);
                     resource.configure(serial);
@@ -83,6 +84,31 @@ impl CompositorState {
         }
         
         serial
+    }
+
+    /// Send `xdg_toplevel.close` so the client can shut down cleanly before the host
+    /// tears down the NSWindow.  Returns `true` if a matching toplevel was found.
+    pub fn send_toplevel_close_for_window(&mut self, window_id: u32) -> bool {
+        for data in self.xdg.toplevels.values_mut() {
+            if data.window_id == window_id {
+                if let Some(res) = &data.resource {
+                    crate::wlog!(
+                        crate::util::logging::COMPOSITOR,
+                        "Sending xdg_toplevel.close for window_id={}",
+                        window_id
+                    );
+                    res.close();
+                    return true;
+                }
+                break;
+            }
+        }
+        crate::wlog!(
+            crate::util::logging::COMPOSITOR,
+            "send_toplevel_close_for_window: no toplevel for window_id={}",
+            window_id
+        );
+        false
     }
 
     /// Dismiss the active popup grab and all its child popups

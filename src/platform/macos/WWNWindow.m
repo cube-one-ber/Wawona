@@ -3,6 +3,11 @@
 #import "WWNCompositorBridge.h"
 #import "WWNSettings.h"
 
+@interface WWNWindow ()
+@property(nonatomic, assign) BOOL wwnCloseDeferred;
+@property(nonatomic, strong) NSTimer *wwnCloseForceTimer;
+@end
+
 //
 // WWNView Implementation (macOS)
 //
@@ -18,7 +23,6 @@
 
   // Text Assist proxy buffer for autocorrect / text replacement context
   NSMutableString *textBuffer_;
-  BOOL textAssistEnabled_;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -33,7 +37,7 @@
 
     contentLayer_ = [CALayer layer];
     contentLayer_.geometryFlipped = YES;
-    contentLayer_.contentsGravity = kCAGravityResize;
+    contentLayer_.contentsGravity = kCAGravityTopLeft;
     contentLayer_.masksToBounds =
         NO; // Allow subsurfaces to extend outside (Wayland spec)
     contentLayer_.autoresizingMask =
@@ -42,7 +46,6 @@
     [self updateTrackingAreas];
 
     textBuffer_ = [NSMutableString string];
-    textAssistEnabled_ = WWNSettings_GetEnableTextAssist();
 
     [[NSNotificationCenter defaultCenter]
         addObserver:self
@@ -58,7 +61,7 @@
 }
 
 - (void)defaultsChanged:(NSNotification *)notification {
-  textAssistEnabled_ = WWNSettings_GetEnableTextAssist();
+  (void)notification;
   [self.window invalidateCursorRectsForView:self];
 }
 
@@ -66,7 +69,7 @@
   if (!contentLayer_) {
     contentLayer_ = [CALayer layer];
     contentLayer_.geometryFlipped = YES;
-    contentLayer_.contentsGravity = kCAGravityResize;
+    contentLayer_.contentsGravity = kCAGravityTopLeft;
     contentLayer_.masksToBounds =
         NO; // Allow subsurfaces to extend outside (Wayland spec)
     contentLayer_.autoresizingMask =
@@ -505,29 +508,27 @@ static uint32_t MacosToXkbKeycode(unsigned short macCode) {
   markedRange_ = NSMakeRange(NSNotFound, 0);
 
   // Update the proxy text buffer for context (used by autocorrect)
-  if (textAssistEnabled_) {
-    if (replacementRange.location != NSNotFound &&
-        replacementRange.location < textBuffer_.length) {
-      NSRange safeRange =
-          NSMakeRange(replacementRange.location,
-                      MIN(replacementRange.length,
-                          textBuffer_.length - replacementRange.location));
+  if (replacementRange.location != NSNotFound &&
+      replacementRange.location < textBuffer_.length) {
+    NSRange safeRange =
+        NSMakeRange(replacementRange.location,
+                    MIN(replacementRange.length,
+                        textBuffer_.length - replacementRange.location));
 
-      // Compute deletion needed before committing replacement text
-      WWNCompositorBridge *bridge = [WWNCompositorBridge sharedBridge];
-      if (safeRange.length > 0) {
-        // Delete the text being replaced, then commit new text
-        [bridge textInputDeleteSurrounding:(uint32_t)safeRange.length
-                               afterLength:0];
-      }
-      [textBuffer_ replaceCharactersInRange:safeRange withString:str];
-      selectedRange_ = NSMakeRange(safeRange.location + str.length, 0);
-      [bridge textInputCommitString:str];
-      return;
+    // Compute deletion needed before committing replacement text
+    WWNCompositorBridge *bridge = [WWNCompositorBridge sharedBridge];
+    if (safeRange.length > 0) {
+      // Delete the text being replaced, then commit new text
+      [bridge textInputDeleteSurrounding:(uint32_t)safeRange.length
+                             afterLength:0];
     }
-    [textBuffer_ appendString:str];
-    selectedRange_ = NSMakeRange(textBuffer_.length, 0);
+    [textBuffer_ replaceCharactersInRange:safeRange withString:str];
+    selectedRange_ = NSMakeRange(safeRange.location + str.length, 0);
+    [bridge textInputCommitString:str];
+    return;
   }
+  [textBuffer_ appendString:str];
+  selectedRange_ = NSMakeRange(textBuffer_.length, 0);
 
   // If the raw keycode was already injected by keyDown:, we don't need
   // to send it again — the wl_keyboard path already delivered it.
@@ -595,7 +596,7 @@ static uint32_t MacosToXkbKeycode(unsigned short macCode) {
 - (NSAttributedString *)attributedSubstringForProposedRange:(NSRange)range
                                                 actualRange:(NSRangePointer)
                                                                 actualRange {
-  if (!textAssistEnabled_ || textBuffer_.length == 0) {
+  if (textBuffer_.length == 0) {
     return nil;
   }
 
@@ -672,7 +673,19 @@ static uint32_t MacosToXkbKeycode(unsigned short macCode) {
 //
 // WWNWindow Implementation
 //
+static const NSTimeInterval kWWNDeferredCloseForceDelaySeconds = 1.25;
+
 @implementation WWNWindow
+
+- (void)wwnCancelCloseForceTimer {
+  [self.wwnCloseForceTimer invalidate];
+  self.wwnCloseForceTimer = nil;
+}
+
+- (void)cancelPendingHostCloseEscalation {
+  self.wwnCloseDeferred = NO;
+  [self wwnCancelCloseForceTimer];
+}
 
 - (instancetype)initWithContentRect:(NSRect)contentRect
                           styleMask:(NSWindowStyleMask)style
@@ -694,7 +707,7 @@ static uint32_t MacosToXkbKeycode(unsigned short macCode) {
     return;
   }
 
-  NSSize size = [self.contentView bounds].size;
+  NSSize size = [self contentLayoutRect].size;
   [[WWNCompositorBridge sharedBridge] injectWindowResize:self.wwnWindowId
                                                    width:(uint32_t)size.width
                                                   height:(uint32_t)size.height];
@@ -741,6 +754,59 @@ static uint32_t MacosToXkbKeycode(unsigned short macCode) {
 
   [[WWNCompositorBridge sharedBridge]
       injectKeyboardLeaveForWindow:self.wwnWindowId];
+}
+
+/// Defer AppKit teardown until the Wayland client handles `xdg_toplevel.close`.
+/// Without this, closing the NSWindow first races nested compositors (e.g. Weston)
+/// and can abort the client during Cairo/Pixman teardown.
+- (BOOL)windowShouldClose:(NSWindow *)sender {
+  (void)sender;
+  if (self.suppressCompositorCallbacks) {
+    return YES;
+  }
+  if (self.wwnCloseDeferred) {
+    [self wwnCancelCloseForceTimer];
+    self.wwnCloseDeferred = NO;
+    [[WWNCompositorBridge sharedBridge]
+        requestForceDestroyHostWindowForWindowId:self.wwnWindowId];
+    WWNLog("INPUT", @"windowShouldClose: second close — force-destroy host for "
+                     @"window %llu",
+           self.wwnWindowId);
+    return NO;
+  }
+  BOOL sent = [[WWNCompositorBridge sharedBridge]
+      requestHostCloseForWindowId:self.wwnWindowId];
+  if (sent) {
+    WWNLog("INPUT", @"windowShouldClose: sent xdg_toplevel.close for window %llu — "
+                     @"deferring NSWindow close",
+           self.wwnWindowId);
+    self.wwnCloseDeferred = YES;
+    __weak WWNWindow *weakSelf = self;
+    [self.wwnCloseForceTimer invalidate];
+    self.wwnCloseForceTimer = [NSTimer
+        scheduledTimerWithTimeInterval:kWWNDeferredCloseForceDelaySeconds
+                               repeats:NO
+                                 block:^(NSTimer *_Nonnull timer) {
+                                   (void)timer;
+                                   WWNWindow *strong = weakSelf;
+                                   if (!strong || !strong.wwnCloseDeferred) {
+                                     return;
+                                   }
+                                   strong.wwnCloseDeferred = NO;
+                                   [strong wwnCancelCloseForceTimer];
+                                   BOOL ok = [[WWNCompositorBridge sharedBridge]
+                                       requestForceDestroyHostWindowForWindowId:
+                                           strong.wwnWindowId];
+                                   if (ok) {
+                                     WWNLog("INPUT",
+                                            @"Deferred force-destroy for window "
+                                            @"%llu (client did not tear down)",
+                                            strong.wwnWindowId);
+                                   }
+                                 }];
+    return NO;
+  }
+  return YES;
 }
 
 @end

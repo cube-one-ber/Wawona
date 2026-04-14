@@ -168,20 +168,29 @@ EOF
       fi
     }
 
-    wait_for_emulator_boot() {
+    # Return first emulator serial that is fully booted *and* reports Wear/watch traits.
+    # Reusing "any emulator" breaks smoke tests when a phone/tablet AVD is already running.
+    wait_for_wear_emulator_boot() {
       local timeout=420
       local elapsed=0
-      while [ "$elapsed" -lt "$timeout" ]; do
-        local serial
-        serial="$(adb devices | awk '/^emulator-[0-9]+\tdevice$/ { print $1; exit }')"
-        if [ -n "$serial" ]; then
-          local boot
+           while [ "$elapsed" -lt "$timeout" ]; do
+        local line serial state boot
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          serial="$(printf '%s' "$line" | awk '{ print $1 }')"
+          state="$(printf '%s' "$line" | awk '{ print $2 }')"
+          case "$serial" in
+ emulator-*) ;;
+            *) continue ;;
+          esac
+          [ "$state" = "device" ] || continue
           boot="$(adb -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
-          if [ "$boot" = "1" ]; then
+          [ "$boot" = "1" ] || continue
+          if is_wear_target "$serial"; then
             echo "$serial"
             return 0
           fi
-        fi
+        done < <(adb devices 2>/dev/null | tail -n +2)
         sleep 3
         elapsed=$((elapsed + 3))
       done
@@ -214,6 +223,27 @@ EOF
       return 1
     }
 
+    find_booted_wear_serial() {
+      local line serial state boot
+      while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        serial="$(printf '%s' "$line" | awk '{ print $1 }')"
+        state="$(printf '%s' "$line" | awk '{ print $2 }')"
+        case "$serial" in
+          emulator-*) ;;
+          *) continue ;;
+        esac
+        [ "$state" = "device" ] || continue
+        boot="$(adb -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
+        [ "$boot" = "1" ] || continue
+        if is_wear_target "$serial"; then
+          echo "$serial"
+          return 0
+        fi
+      done < <(adb devices 2>/dev/null | tail -n +2)
+      return 1
+    }
+
     ensure_wear_emulator_running() {
       echo "[wearos] Provisioning emulator runtime..." >&2
       ensure_wear_sdk || return 1
@@ -221,20 +251,23 @@ EOF
 
       adb start-server >/dev/null 2>&1 || true
       local existing
-      existing="$(adb devices | awk '/^emulator-[0-9]+\tdevice$/ { print $1; exit }')"
+      existing="$(find_booted_wear_serial || true)"
       if [ -n "$existing" ]; then
         WEAR_EMULATOR_SERIAL="$existing"
+        echo "[wearos] Reusing booted Wear emulator: $existing" >&2
         return 0
       fi
 
-      echo "[wearos] Starting WearOS emulator '$WEAR_AVD_NAME'..." >&2
+      echo "[wearos] Starting WearOS emulator '$WEAR_AVD_NAME' (logs: /tmp/wawona-wearos-emulator.log)..." >&2
+      echo "[wearos] If another non-Wear emulator is running, close it or wait — this script only attaches to Wear/watch targets." >&2
       (setsid nohup emulator -avd "$WEAR_AVD_NAME" -no-snapshot -no-boot-anim -gpu auto < /dev/null > /tmp/wawona-wearos-emulator.log 2>&1 &)
 
       local serial
-      serial="$(wait_for_emulator_boot || true)"
+      serial="$(wait_for_wear_emulator_boot || true)"
       if [ -z "$serial" ]; then
-        echo "[wearos] ERROR: WearOS emulator did not boot in time." >&2
+        echo "[wearos] ERROR: No WearOS emulator finished booting in time (7 min timeout)." >&2
         echo "[wearos] Check /tmp/wawona-wearos-emulator.log for details." >&2
+        echo "[wearos] Tip: adb devices — expect emulator-* with Wear system image; phone AVDs are ignored." >&2
         return 1
       fi
       WEAR_EMULATOR_SERIAL="$serial"
@@ -256,7 +289,8 @@ EOF
     fi
     cd "$repo_root"
 
-    echo "[wearos] Building Wawona WearOS package via Nix (.#${wearAndroidPackage})..."
+    echo "[wearos] Building Wawona WearOS package via Nix (.#${wearAndroidPackage})..." >&2
+    echo "[wearos] Note: Skip Swift export + Gradle can take 10–25+ minutes on first build; logs may pause after [Nix/Android] skip export SDKROOT=..." >&2
     nix build ".#${wearAndroidPackage}" --print-build-logs
     apk_path="$repo_root/result/bin/Wawona.apk"
     if [ ! -f "$apk_path" ]; then

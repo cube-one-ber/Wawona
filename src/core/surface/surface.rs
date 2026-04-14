@@ -14,6 +14,7 @@ pub struct SurfaceState {
     pub height: i32,
     pub offset: (i32, i32),
     pub damage: Vec<DamageRegion>,
+    pub buffer_damage: Vec<DamageRegion>,
     pub input_region: Option<Vec<crate::core::surface::damage::DamageRegion>>, // Using DamageRegion as Rect equivalent for now
     pub opaque_region: Option<Vec<crate::core::surface::damage::DamageRegion>>,
     pub opaque: bool,
@@ -86,6 +87,7 @@ impl Surface {
         let new_cached = self.pending.clone();
         // Reset pending damage for next commit
         self.pending.damage.clear();
+        self.pending.buffer_damage.clear();
         
         self.cached = Some(new_cached);
         
@@ -124,6 +126,7 @@ impl Default for SurfaceState {
             height: 0,
             offset: (0, 0),
             damage: Vec::new(),
+            buffer_damage: Vec::new(),
             input_region: None, // None means infinite (accept all input)
             opaque_region: None, // None means empty (fully transparent)
             opaque: false, // Legacy field, might be redundant with opaque_region but kept for now

@@ -13,6 +13,7 @@
 #import "WWNPlatformCallbacks.h"
 #if !TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
 #import "WWNWindow.h"
+#import "ui/Machines/WWNMachineProfileStore.h"
 #endif
 #if TARGET_OS_IPHONE || TARGET_OS_SIMULATOR
 #import <UIKit/UIKit.h>
@@ -47,11 +48,15 @@ extern char *WWNCoreGetSocketName(const void *core);
 extern void WWNStringFree(char *s);
 extern bool WWNCoreProcessEvents(void *core);
 extern void WWNCoreSetOutputSize(void *core, uint32_t w, uint32_t h, float s);
+extern void WWNCoreSetOutputGeometryForWindow(void *core, uint64_t window_id,
+                                              uint32_t w, uint32_t h, float s);
 extern void WWNCoreNotifyFramePresented(void *core, uint32_t surface_id,
                                         uint64_t buffer_id, uint32_t timestamp);
 extern void WWNCoreFree(void *core);
 extern void WWNCoreInjectWindowResize(void *core, uint64_t window_id,
                                       uint32_t width, uint32_t height);
+extern bool WWNCoreRequestWindowClose(void *core, uint64_t window_id);
+extern bool WWNCoreForceDestroyHostWindow(void *core, uint64_t window_id);
 extern void WWNCoreSetWindowActivated(void *core, uint64_t window_id,
                                       bool active);
 extern void WWNCoreSetWindowActivatedSilent(void *core, uint64_t window_id,
@@ -142,6 +147,7 @@ typedef struct CRenderScene {
   float cursor_y;
   float cursor_hotspot_x;
   float cursor_hotspot_y;
+  uint32_t cursor_surface_id;
   uint64_t cursor_buffer_id;
   uint32_t cursor_width;
   uint32_t cursor_height;
@@ -149,6 +155,11 @@ typedef struct CRenderScene {
   uint32_t cursor_format;
   uint32_t cursor_iosurface_id;
 } CRenderScene;
+
+typedef struct {
+  uint32_t surface_id;
+  uint64_t buffer_id;
+} WWNPresentedBuffer;
 
 extern CRenderScene *WWNCoreGetRenderScene(void *core);
 extern void WWNRenderSceneFree(CRenderScene *scene);
@@ -197,6 +208,13 @@ static NSCursor *NSCursorFromWaylandShape(uint32_t shape) {
 }
 #endif
 
+static inline NSString *WWNBufferCacheKey(uint32_t surface_id,
+                                          uint64_t buffer_id) {
+  // wl_buffer ids are client-scoped in Wayland, so buffer_id alone collides
+  // across clients. Include surface_id to keep cache entries disambiguated.
+  return [NSString stringWithFormat:@"%u:%llu", surface_id, buffer_id];
+}
+
 @implementation WWNCompositorBridge {
   void *_rustCore;
   NSTimer *_eventTimer;
@@ -225,8 +243,13 @@ static NSCursor *NSCursorFromWaylandShape(uint32_t shape) {
   NSMutableDictionary<NSNumber *, id<WWNPopupHost>> *_popups;
 #endif
   // Scene Graph caches
-  NSMutableDictionary<NSNumber *, id> *_bufferCache;
+  NSMutableDictionary<id<NSCopying>, id> *_bufferCache;
   NSMutableDictionary<NSNumber *, CALayer *> *_surfaceLayers;
+  NSMutableDictionary<NSNumber *, NSNumber *> *_latestBufferBySurface;
+  NSMutableDictionary<NSNumber *, NSNumber *> *_lastPresentedBufferBySurface;
+#if !TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+  NSMutableDictionary<NSNumber *, NSString *> *_windowOwnerMachineIdByWindowId;
+#endif
 
   // Per-window resize coalescing.  Each window gets its own "latest"
   // dimensions so concurrent resizes of different windows never collide.
@@ -238,6 +261,7 @@ static NSCursor *NSCursorFromWaylandShape(uint32_t shape) {
   // Cursor policy: runtime detection from wp_cursor_shape or wl_pointer.set_cursor
   BOOL _clientWantsCursorRendered;
   uint64_t _lastCursorBufferId;
+  uint32_t _lastCursorSurfaceId;
 
   // Output-size coalescing (same pattern)
   BOOL _outputResizeInFlight;
@@ -294,6 +318,11 @@ static NSCursor *NSCursorFromWaylandShape(uint32_t shape) {
 #endif
     _bufferCache = [NSMutableDictionary dictionary];
     _surfaceLayers = [NSMutableDictionary dictionary];
+    _latestBufferBySurface = [NSMutableDictionary dictionary];
+    _lastPresentedBufferBySurface = [NSMutableDictionary dictionary];
+#if !TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+    _windowOwnerMachineIdByWindowId = [NSMutableDictionary dictionary];
+#endif
     _latestResizeDims = [NSMutableDictionary dictionary];
     _sentResizeDims = [NSMutableDictionary dictionary];
     _resizeInFlightWindows = [NSMutableSet set];
@@ -512,6 +541,11 @@ static NSCursor *NSCursorFromWaylandShape(uint32_t shape) {
 
   [_bufferCache removeAllObjects];
   [_surfaceLayers removeAllObjects];
+  [_latestBufferBySurface removeAllObjects];
+  [_lastPresentedBufferBySurface removeAllObjects];
+#if !TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+  [_windowOwnerMachineIdByWindowId removeAllObjects];
+#endif
   atomic_store(&_compositorBusy, false);
   [_latestResizeDims removeAllObjects];
   [_sentResizeDims removeAllObjects];
@@ -523,6 +557,98 @@ static NSCursor *NSCursorFromWaylandShape(uint32_t shape) {
 - (BOOL)isRunning {
   return _rustCore ? WWNCoreIsRunning(_rustCore) : NO;
 }
+
+#if !TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+- (NSData *)captureCurrentSessionThumbnailPNGData {
+  NSWindow *targetWindow = nil;
+  for (NSNumber *key in [_windows allKeys]) {
+    id candidate = [_windows objectForKey:key];
+    if (![candidate isKindOfClass:[WWNWindow class]]) {
+      continue;
+    }
+    NSWindow *window = (NSWindow *)candidate;
+    if (window.isVisible) {
+      targetWindow = window;
+      break;
+    }
+  }
+  if (!targetWindow) {
+    for (NSNumber *key in [_windows allKeys]) {
+      id candidate = [_windows objectForKey:key];
+      if ([candidate isKindOfClass:[WWNWindow class]]) {
+        targetWindow = (NSWindow *)candidate;
+        break;
+      }
+    }
+  }
+  if (!targetWindow) {
+    return nil;
+  }
+
+  NSView *contentView = targetWindow.contentView;
+  if (!contentView) {
+    return nil;
+  }
+  NSRect bounds = contentView.bounds;
+  if (bounds.size.width < 1 || bounds.size.height < 1) {
+    return nil;
+  }
+  NSBitmapImageRep *rep =
+      [contentView bitmapImageRepForCachingDisplayInRect:bounds];
+  if (!rep) {
+    return nil;
+  }
+  [contentView cacheDisplayInRect:bounds toBitmapImageRep:rep];
+  return [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+}
+
+- (BOOL)focusClientWindows {
+  NSMutableArray<NSWindow *> *clientWindows = [NSMutableArray array];
+  for (NSNumber *key in [_windows allKeys]) {
+    id candidate = [_windows objectForKey:key];
+    if ([candidate isKindOfClass:[WWNWindow class]]) {
+      [clientWindows addObject:(NSWindow *)candidate];
+    }
+  }
+  if (clientWindows.count == 0) {
+    return NO;
+  }
+
+  [NSApp activateIgnoringOtherApps:YES];
+  for (NSWindow *window in clientWindows) {
+    [window orderFront:nil];
+  }
+  [[clientWindows firstObject] makeKeyAndOrderFront:nil];
+  return YES;
+}
+
+- (BOOL)focusClientWindowsForMachineId:(NSString *)machineId {
+  if (machineId.length == 0) {
+    return [self focusClientWindows];
+  }
+  NSMutableArray<NSWindow *> *clientWindows = [NSMutableArray array];
+  for (NSNumber *key in [_windows allKeys]) {
+    id candidate = [_windows objectForKey:key];
+    if (![candidate isKindOfClass:[WWNWindow class]]) {
+      continue;
+    }
+    NSString *ownerId = _windowOwnerMachineIdByWindowId[key];
+    if (ownerId.length > 0 && [ownerId isEqualToString:machineId]) {
+      [clientWindows addObject:(NSWindow *)candidate];
+    }
+  }
+  if (clientWindows.count == 0) {
+    return [self focusClientWindows];
+  }
+
+  [NSApp activateIgnoringOtherApps:YES];
+  for (NSWindow *window in clientWindows) {
+    [window orderFront:nil];
+  }
+  [[clientWindows firstObject] makeKeyAndOrderFront:nil];
+  return YES;
+}
+#endif
 
 - (NSString *)socketPath {
   if (!_rustCore)
@@ -615,6 +741,7 @@ static NSCursor *NSCursorFromWaylandShape(uint32_t shape) {
     //    benefits from running off main thread.
     CBufferData *buffer;
     NSUInteger poppedBufferCount = 0;
+    NSMutableArray<NSValue *> *presentedBuffers = [NSMutableArray array];
     while ((buffer = WWNCorePopPendingBuffer(self->_rustCore)) != NULL) {
       poppedBufferCount++;
       WWNLog("TICK",
@@ -624,16 +751,18 @@ static NSCursor *NSCursorFromWaylandShape(uint32_t shape) {
              buffer->width, buffer->height, buffer->pixels,
              buffer->iosurface_id);
       [self cacheBuffer:buffer];
-      uint32_t ts = (uint32_t)([[NSDate date] timeIntervalSince1970] * 1000.0);
-      WWNCoreNotifyFramePresented(self->_rustCore, buffer->surface_id,
-                                  buffer->buffer_id, ts);
+      WWNPresentedBuffer presented = {
+          .surface_id = buffer->surface_id,
+          .buffer_id = buffer->buffer_id,
+      };
+      [presentedBuffers addObject:[NSValue valueWithBytes:&presented
+                                                 objCType:@encode(WWNPresentedBuffer)]];
       WWNBufferDataFree(buffer);
     }
 
-    // 3b. Flush all pending protocol events (frame_done, buffer_release)
-    //     to clients unconditionally.  Events may have been generated by
-    //     NotifyFramePresented above OR by SurfaceCommitted handlers inside
-    //     ProcessEvents (step 1).  Flushing only when poppedBufferCount > 0
+    // 3b. Flush protocol events generated during ProcessEvents (step 1).
+    //     Frame-presented callbacks are emitted later on the main queue after
+    //     scene/layer application. Flushing only when poppedBufferCount > 0
     //     would leave frame_done events stranded when a commit was processed
     //     but its buffer couldn't be popped (e.g. window not yet created,
     //     DMA-BUF type, SHM mapping failure).  For in-process waypipe on
@@ -706,6 +835,21 @@ static NSCursor *NSCursorFromWaylandShape(uint32_t shape) {
                  exception.name, exception.reason);
         }
         WWNRenderSceneFree(scene);
+      }
+
+      // Acknowledge wl_surface.frame/buffer release only after scene/layer
+      // updates have consumed this tick's buffers.
+      if (presentedBuffers.count > 0 && self->_rustCore) {
+        uint32_t ts =
+            (uint32_t)([[NSDate date] timeIntervalSince1970] * 1000.0);
+        for (NSValue *val in presentedBuffers) {
+          WWNPresentedBuffer presented = {0};
+          [val getValue:&presented];
+          [self notifyFramePresentedForSurface:presented.surface_id
+                                        buffer:presented.buffer_id
+                                     timestamp:ts];
+        }
+        WWNCoreFlushClients(self->_rustCore);
       }
 
 #if !TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
@@ -782,12 +926,15 @@ static NSCursor *NSCursorFromWaylandShape(uint32_t shape) {
 
 - (void)cacheBuffer:(CBufferData *)buffer {
   NSNumber *bufId = @(buffer->buffer_id);
+  NSNumber *surfaceId = @(buffer->surface_id);
+  NSString *cacheKey = WWNBufferCacheKey(buffer->surface_id, buffer->buffer_id);
+  _latestBufferBySurface[surfaceId] = bufId;
 
   // 1. IOSurface
   if (buffer->iosurface_id != 0) {
     IOSurfaceRef surf = IOSurfaceLookup(buffer->iosurface_id);
     if (surf) {
-      _bufferCache[bufId] = (__bridge_transfer id)surf;
+      _bufferCache[cacheKey] = (__bridge_transfer id)surf;
       WWNLog("CACHE", @"Cached IOSurface buf=%llu", buffer->buffer_id);
     } else {
       WWNLog("CACHE", @"FAILED IOSurface lookup for buf=%llu iosurface=%u",
@@ -810,7 +957,7 @@ static NSCursor *NSCursorFromWaylandShape(uint32_t shape) {
         bitmapInfo, provider, NULL, false, kCGRenderingIntentDefault);
 
     if (image) {
-      _bufferCache[bufId] = (__bridge_transfer id)image;
+      _bufferCache[cacheKey] = (__bridge_transfer id)image;
       WWNLog("CACHE", @"Cached SHM CGImage buf=%llu %ux%u stride=%u",
              buffer->buffer_id, buffer->width, buffer->height, buffer->stride);
     } else {
@@ -910,11 +1057,19 @@ static NSCursor *NSCursorFromWaylandShape(uint32_t shape) {
   [CATransaction setDisableActions:YES];
 
   // 2. Update Geometry — use anchor for window-local coords (subsurfaces)
+  float scaleDiff = layer.contentsScale - node->scale;
+  if (scaleDiff < 0.0f) {
+    scaleDiff = -scaleDiff;
+  }
+  if (scaleDiff > 0.001f) {
+    layer.contentsScale = node->scale;
+  }
   float localX = node->x - node->anchor_output_x;
   float localY = node->y - node->anchor_output_y;
   layer.position =
       CGPointMake(localX + node->width / 2, localY + node->height / 2);
   layer.bounds = CGRectMake(0, 0, node->width, node->height);
+  layer.contentsScale = MAX(1.0, node->scale);
   layer.opacity = node->opacity;
   layer.cornerRadius = node->corner_radius;
 
@@ -925,18 +1080,41 @@ static NSCursor *NSCursorFromWaylandShape(uint32_t shape) {
   if (node->content_rect_w > 0.0f && node->content_rect_h > 0.0f) {
     layer.contentsRect = CGRectMake(node->content_rect_x, node->content_rect_y,
                                     node->content_rect_w, node->content_rect_h);
+  } else {
+    // Reset to full buffer when no geometry crop is active.
+    layer.contentsRect = CGRectMake(0.0, 0.0, 1.0, 1.0);
   }
 
   // 3. Update Contents from Cache
   // We use node->buffer_id to look up the image
-  id content = _bufferCache[@(node->buffer_id)];
+  NSNumber *latestForSurface = _latestBufferBySurface[surfId];
+  BOOL isStaleSceneBuffer =
+      (node->buffer_id != 0 && latestForSurface &&
+       latestForSurface.unsignedLongLongValue != node->buffer_id);
+  if (isStaleSceneBuffer) {
+    WWNLog("RENDER",
+           @"STALE: surf=%@ win=%@ scene_buf=%llu latest_buf=%llu; preferring "
+           @"latest cached buffer",
+           surfId, winId, node->buffer_id,
+           latestForSurface.unsignedLongLongValue);
+  }
+  uint64_t selectedBufferId = node->buffer_id;
+  if (isStaleSceneBuffer) {
+    selectedBufferId = latestForSurface.unsignedLongLongValue;
+  }
+  NSString *cacheKey = WWNBufferCacheKey(node->surface_id, selectedBufferId);
+  id content = _bufferCache[cacheKey];
   if (node->buffer_id != 0 && !content) {
     WWNLog(
         "RENDER",
-        @"MISS: surf=%@ win=%@ buf=%llu not in cache (cache has %lu entries)",
-        surfId, winId, node->buffer_id, (unsigned long)_bufferCache.count);
+        @"MISS: surf=%@ win=%@ scene_buf=%llu selected_buf=%llu not in cache "
+        @"(cache has %lu entries)",
+        surfId, winId, node->buffer_id, selectedBufferId,
+        (unsigned long)_bufferCache.count);
   }
-  if (content) {
+  if (node->buffer_id == 0) {
+    layer.contents = nil;
+  } else if (content) {
     layer.contents = content;
   }
 
@@ -1349,6 +1527,33 @@ extern void WWNCoreInject_touch_frame(void *core);
   [self _drainPendingWindowResizeForId:key];
 }
 
+- (BOOL)requestHostCloseForWindowId:(uint64_t)windowId {
+  if (!_rustCore || !_compositorQueue) {
+    return NO;
+  }
+  __block BOOL found = NO;
+  dispatch_sync(_compositorQueue, ^{
+    found = WWNCoreRequestWindowClose(self->_rustCore, windowId);
+  });
+  return found;
+}
+
+- (BOOL)requestForceDestroyHostWindowForWindowId:(uint64_t)windowId {
+  if (!_rustCore || !_compositorQueue) {
+    return NO;
+  }
+  __block BOOL ok = NO;
+  dispatch_sync(_compositorQueue, ^{
+    ok = WWNCoreForceDestroyHostWindow(self->_rustCore, windowId);
+  });
+  if (ok) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self pollAndHandleWindowEvents];
+    });
+  }
+  return ok;
+}
+
 /// Dispatch at most one resize block per window to the compositor queue.
 /// When the block completes, it checks whether newer dimensions arrived
 /// for that window while it was running and re-dispatches if necessary.
@@ -1464,8 +1669,10 @@ extern void WWNCoreInject_touch_frame(void *core);
   if (!_rustCore) {
     return;
   }
-  WWNCoreSetForceSSD(_rustCore, enabled);
-  WWNLog("BRIDGE", @"Force SSD set to: %d", enabled);
+  [self _dispatchToRust:^{
+    WWNCoreSetForceSSD(self->_rustCore, enabled);
+    WWNLog("BRIDGE", @"Force SSD set to: %d", enabled);
+  }];
 }
 - (void)setKeyboardRepeatRate:(int32_t)rate delay:(int32_t)delay {
 }
@@ -1517,6 +1724,10 @@ typedef struct CWindowEvent {
   uint8_t fullscreen_shell; // 0 = no, 1 = yes (kiosk - no host chrome)
   uint8_t edges;            // xdg_toplevel resize_edge
   uint8_t padding;
+  uint8_t size_kind;        // 0=Frame, 1=Content, 2=Buffer
+  uint8_t size_cause;       // 0=Unknown, 1=HostConfigure, 2=ClientCommit, 3=OutputModeChange
+  uint32_t configure_serial;
+  uint64_t transaction_id;
 } CWindowEvent;
 
 extern CWindowEvent *WWNCorePopWindowEvent(void *core);
@@ -1711,7 +1922,7 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
   // Create content view
   WWNView *contentView = [[WWNView alloc] initWithFrame:contentRect];
   contentView.wantsLayer = YES;
-  contentView.layer.backgroundColor = [[NSColor blackColor] CGColor];
+  contentView.layer.backgroundColor = [[NSColor clearColor] CGColor];
   contentView.layer.contentsGravity = kCAGravityResize;
 
   [window setContentView:contentView];
@@ -1722,6 +1933,10 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
   // semantics)
 
   [_windows setObject:window forKey:@(event->window_id)];
+  NSString *ownerMachineId = [WWNMachineProfileStore activeMachineId];
+  if (ownerMachineId.length > 0) {
+    _windowOwnerMachineIdByWindowId[@(event->window_id)] = ownerMachineId;
+  }
   WWNLog("BRIDGE", @"Created window %llu: %@ (total windows: %lu)",
          event->window_id, title, (unsigned long)[_windows count]);
 
@@ -1741,11 +1956,16 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
            shouldUpdateOutput ? @" (+ output mode update)" : @"");
 
     if (shouldUpdateOutput && contentSize.width > 0 && contentSize.height > 0) {
-      // Update wl_output.mode to the new windowed content-area size so
-      // nested compositors configure their virtual display correctly.
-      [self setOutputWidth:(uint32_t)contentSize.width
-                    height:(uint32_t)contentSize.height
-                     scale:_latestOutputScale > 0 ? _latestOutputScale : 1.0f];
+      // Update wl_output.mode for **this** window's client only so nested compositors
+      // see the drawable size. Global setOutputWidth reconfigured every xdg_toplevel
+      // and broadcast output mode to all clients, freezing unrelated sessions.
+      uint64_t wid = event->window_id;
+      uint32_t ow = (uint32_t)contentSize.width;
+      uint32_t oh = (uint32_t)contentSize.height;
+      float s = _latestOutputScale > 0 ? _latestOutputScale : 1.0f;
+      [self _dispatchToRust:^{
+        WWNCoreSetOutputGeometryForWindow(self->_rustCore, wid, ow, oh, s);
+      }];
     }
 
     [self injectWindowResize:event->window_id
@@ -1760,12 +1980,26 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
   WWNWindow *window = _windows[@(event->window_id)];
   if (!window)
     return;
+  if (window.interactiveResizeInProgress) {
+    WWNLog("BRIDGE", @"Ignoring move request during interactive resize: id=%llu",
+           event->window_id);
+    return;
+  }
 
   NSEvent *currentEvent = [NSApp currentEvent];
-  if (currentEvent && (currentEvent.type == NSEventTypeLeftMouseDown ||
-                       currentEvent.type == NSEventTypeLeftMouseDragged)) {
+  BOOL validCurrentEvent =
+      currentEvent && currentEvent.window == window &&
+      (currentEvent.type == NSEventTypeLeftMouseDown ||
+       currentEvent.type == NSEventTypeLeftMouseDragged);
+  if (validCurrentEvent) {
     [window performWindowDragWithEvent:currentEvent];
-  } else if (window.lastMouseDownEvent) {
+  } else if (window.lastMouseDownEvent &&
+             window.lastMouseDownEvent.window == window &&
+             (window.lastMouseDownEvent.type == NSEventTypeLeftMouseDown ||
+              window.lastMouseDownEvent.type == NSEventTypeLeftMouseDragged) &&
+             ([NSDate timeIntervalSinceReferenceDate] -
+                  window.lastMouseDownEvent.timestamp <
+              0.25)) {
     [window performWindowDragWithEvent:window.lastMouseDownEvent];
   }
 #endif
@@ -1828,6 +2062,7 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
   uint8_t edges = event->edges;
   NSPoint startLoc = [NSEvent mouseLocation];
   NSRect startFrame = window.frame;
+  window.interactiveResizeInProgress = YES;
 
   // Track the mouse and resize the window according to the requested edge
   [window
@@ -1874,6 +2109,7 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
 
                         [window setFrame:newFrame display:YES];
                       }];
+  window.interactiveResizeInProgress = NO;
 #endif
 }
 
@@ -1972,13 +2208,17 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
   if (scene->cursor_buffer_id == 0)
     return;
 
-  if (scene->cursor_buffer_id == _lastCursorBufferId)
+  if (scene->cursor_buffer_id == _lastCursorBufferId &&
+      scene->cursor_surface_id == _lastCursorSurfaceId)
     return;
   _lastCursorBufferId = scene->cursor_buffer_id;
+  _lastCursorSurfaceId = scene->cursor_surface_id;
 
   [self _ensureCursorRenderingEnabled];
 
-  id cached = _bufferCache[@(scene->cursor_buffer_id)];
+  NSString *cacheKey =
+      WWNBufferCacheKey(scene->cursor_surface_id, scene->cursor_buffer_id);
+  id cached = _bufferCache[cacheKey];
   if (!cached)
     return;
 
@@ -2014,9 +2254,27 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
 #else
   NSWindow *window = [_windows objectForKey:@(event->window_id)];
   if (window) {
+    NSString *activeMachineId = [WWNMachineProfileStore activeMachineId];
+    WWNMachineProfile *activeProfile =
+        [WWNMachineProfileStore profileById:activeMachineId];
+    if (activeProfile &&
+        [WWNMachineProfileStore isMachineThumbnailEnabledForProfile:activeProfile]) {
+      Class thumbnailStoreClass = NSClassFromString(@"WWNMachineThumbnailStore");
+      SEL saveSelector = NSSelectorFromString(@"saveThumbnailFromWindow:machineId:");
+      if (thumbnailStoreClass && [thumbnailStoreClass respondsToSelector:saveSelector]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        [thumbnailStoreClass performSelector:saveSelector
+                                  withObject:window
+                                  withObject:activeMachineId];
+#pragma clang diagnostic pop
+      }
+    }
     @try {
       if ([window isKindOfClass:[WWNWindow class]]) {
-        ((WWNWindow *)window).suppressCompositorCallbacks = YES;
+        WWNWindow *wwn = (WWNWindow *)window;
+        wwn.suppressCompositorCallbacks = YES;
+        [wwn cancelPendingHostCloseEscalation];
       }
 
       // Detach known surface layers from this host view before teardown.
@@ -2031,6 +2289,7 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
       }
 
       [_windows removeObjectForKey:@(event->window_id)];
+      [_windowOwnerMachineIdByWindowId removeObjectForKey:@(event->window_id)];
 
       // Avoid NSWindow close-time delegate/first-responder cascades when the
       // Wayland client has already been torn down. Hiding + detaching keeps
@@ -2043,6 +2302,7 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
              @"Exception while destroying window %llu: %@ (%@)",
              event->window_id, exception.name, exception.reason);
       [_windows removeObjectForKey:@(event->window_id)];
+      [_windowOwnerMachineIdByWindowId removeObjectForKey:@(event->window_id)];
       @try {
         [window orderOut:nil];
       } @catch (NSException *inner) {
@@ -2057,6 +2317,7 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
     if (_clientWantsCursorRendered) {
       _clientWantsCursorRendered = NO;
       _lastCursorBufferId = 0;
+      _lastCursorSurfaceId = 0;
       WWNLog("BRIDGE",
              @"All windows destroyed — resetting cursor rendering flag");
     }
@@ -2096,8 +2357,9 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
   WWNWindow *window = [self.windows objectForKey:@(event->window_id)];
   if (window) {
     // Check if size actually changed to avoid loop
-    if (window.contentView.bounds.size.width != event->width ||
-        window.contentView.bounds.size.height != event->height) {
+    NSSize contentSize = [window contentLayoutRect].size;
+    if (contentSize.width != event->width ||
+        contentSize.height != event->height) {
 
       window.processingResize = YES;
       NSRect frame =
@@ -2233,10 +2495,13 @@ extern void WWNWindowInfoFree(CWindowInfo *info);
   if (!scene)
     return;
 
-  // Look up the cached cursor image (keyed by buffer_id)
+  // Look up the cached cursor image (keyed by surface_id + buffer_id)
   id cursorImage = nil;
-  if (scene->has_cursor && scene->cursor_buffer_id > 0) {
-    cursorImage = _bufferCache[@(scene->cursor_buffer_id)];
+  if (scene->has_cursor && scene->cursor_surface_id > 0 &&
+      scene->cursor_buffer_id > 0) {
+    NSString *cacheKey =
+        WWNBufferCacheKey(scene->cursor_surface_id, scene->cursor_buffer_id);
+    cursorImage = _bufferCache[cacheKey];
   }
 
   for (NSNumber *key in _windows) {

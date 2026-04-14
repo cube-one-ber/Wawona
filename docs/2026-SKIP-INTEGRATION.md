@@ -17,7 +17,8 @@ Nix + XcodeGen build system.
 - Apple: `Darwin/Sources/Main.swift` delegates to `WawonaRootView` and
   `WawonaAppDelegate` (Howdy Skip pattern).
 - Android: `android/app/src/main/java/com/aspauldingcode/wawona/Main.kt`
-  hosts the compositor surface and Compose overlays.
+  hosts `WawonaRootView` via Skip Fuse (`PresentationRoot`), while compositor
+  rendering/input stays native through the Android bridge.
 
 ## Nix integration
 
@@ -26,7 +27,7 @@ Nix + XcodeGen build system.
 - `dependencies/wawona/android.nix` optionally runs:
 
 ```bash
-skip export --project . -d android/Skip --debug
+skip export --project . -d android/Skip --verbose --debug
 ```
 
 before Gradle assemble.
@@ -38,7 +39,7 @@ before Gradle assemble.
 - If Skip artifacts are missing, Gradle attempts:
 
 ```bash
-skip export --project . -d android/Skip --debug
+skip export --project . -d android/Skip --verbose --debug
 ```
 
 - If the `skip` CLI is unavailable in a non-Nix local build (or export fails),

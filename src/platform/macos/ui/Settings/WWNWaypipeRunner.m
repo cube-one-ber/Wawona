@@ -1179,6 +1179,7 @@ extern int weston_terminal_main(int argc, char **argv);
     self.westonSimpleSHMTask = task;
     WWNLog("WESTON_SHM", @"Launched weston-simple-shm with PID %d",
            task.processIdentifier);
+    [self _installNativeClientTerminationHandler:task kind:@"westonSimpleSHM"];
   } else {
     WWNLog("WESTON_SHM", @"Failed to launch weston-simple-shm: %@", err);
     self.westonSimpleSHMRunning = NO;
@@ -1282,6 +1283,47 @@ extern int weston_terminal_main(int argc, char **argv);
     *runningFlag = NO;
   }
 }
+
+/// When the child exits (quit, crash, SIGKILL), clear flags and notify so UI can
+/// drop "connected" without requiring Stop. `kind` is @"weston" | @"westonTerminal" | @"westonSimpleSHM" | @"foot".
+- (void)_installNativeClientTerminationHandler:(NSTask *)task kind:(NSString *)kind {
+  if (!task || !kind)
+    return;
+  __weak WWNWaypipeRunner *weakSelf = self;
+  task.terminationHandler = ^(NSTask *finished) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      WWNWaypipeRunner *s = weakSelf;
+      if (!s)
+        return;
+      if ([kind isEqualToString:@"weston"]) {
+        if (s.westonTask != finished)
+          return;
+        s.westonTask = nil;
+        s.westonRunning = NO;
+      } else if ([kind isEqualToString:@"westonTerminal"]) {
+        if (s.westonTerminalTask != finished)
+          return;
+        s.westonTerminalTask = nil;
+        s.westonTerminalRunning = NO;
+      } else if ([kind isEqualToString:@"westonSimpleSHM"]) {
+        if (s.westonSimpleSHMTask != finished)
+          return;
+        s.westonSimpleSHMTask = nil;
+        s.westonSimpleSHMRunning = NO;
+      } else if ([kind isEqualToString:@"foot"]) {
+        if (s.footTask != finished)
+          return;
+        s.footTask = nil;
+        s.footRunning = NO;
+      } else {
+        return;
+      }
+      [[NSNotificationCenter defaultCenter]
+          postNotificationName:@"WWNNativeClientProcessDidTerminateNotification"
+                        object:s];
+    });
+  };
+}
 #endif
 
 // MARK: - Native Weston Executable
@@ -1325,6 +1367,9 @@ extern int weston_terminal_main(int argc, char **argv);
                     runningFlagIn:&running];
   self.westonTask = task;
   self.westonRunning = running;
+  if (task) {
+    [self _installNativeClientTerminationHandler:task kind:@"weston"];
+  }
 #endif
 }
 
@@ -1446,6 +1491,7 @@ extern int weston_terminal_main(int argc, char **argv);
     self.westonTerminalTask = task;
     WWNLog("WESTON_TERM", @"Launched weston-terminal with PID %d",
            task.processIdentifier);
+    [self _installNativeClientTerminationHandler:task kind:@"westonTerminal"];
   } else {
     WWNLog("WESTON_TERM", @"Failed to launch weston-terminal: %@", err);
     self.westonTerminalRunning = NO;
@@ -1506,6 +1552,9 @@ extern int weston_terminal_main(int argc, char **argv);
                     runningFlagIn:&running];
   self.footTask = task;
   self.footRunning = running;
+  if (task) {
+    [self _installNativeClientTerminationHandler:task kind:@"foot"];
+  }
 #endif
 }
 

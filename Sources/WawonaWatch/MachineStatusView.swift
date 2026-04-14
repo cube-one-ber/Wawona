@@ -99,7 +99,7 @@ struct MachineRowLabel: View {
         if profile.type == .native, let launcher = profile.launchers.first {
             return launcher.displayName
         }
-        return profile.type.watchDisplayName
+        return profile.type.userFacingName
     }
 
     var body: some View {
@@ -115,30 +115,6 @@ struct MachineRowLabel: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-        }
-    }
-}
-
-// MARK: - MachineType watch helpers
-
-extension MachineType {
-    var watchDisplayName: String {
-        switch self {
-        case .native:          return "Native"
-        case .sshWaypipe:      return "SSH + Waypipe"
-        case .sshTerminal:     return "SSH Terminal"
-        case .virtualMachine:  return "Virtual Machine"
-        case .container:       return "Container"
-        }
-    }
-
-    var watchSystemImage: String {
-        switch self {
-        case .native:          return "desktopcomputer"
-        case .sshWaypipe:      return "network"
-        case .sshTerminal:     return "terminal"
-        case .virtualMachine:  return "cube"
-        case .container:       return "shippingbox"
         }
     }
 }

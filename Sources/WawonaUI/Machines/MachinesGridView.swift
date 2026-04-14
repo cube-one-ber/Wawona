@@ -5,13 +5,14 @@ struct MachinesGridView: View {
     let profiles: [MachineProfile]
     @ObservedObject var sessions: SessionOrchestrator
     let onAdd: () -> Void
+    let onEdit: (MachineProfile) -> Void
     let onConnect: (MachineProfile) -> Void
     let onDelete: (MachineProfile) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                SectionHeader("Machine Grid", subtitle: "Adaptive layout across iPhone, iPad, and Mac")
+                SectionHeader("Machines", subtitle: gridBlurb)
                 Spacer()
                 Button("New Machine", action: onAdd)
             }
@@ -39,6 +40,7 @@ struct MachinesGridView: View {
                             profile: profile,
                             status: status(for: profile.id),
                             onConnect: { onConnect(profile) },
+                            onEdit: { onEdit(profile) },
                             onDelete: { onDelete(profile) }
                         )
                     }
@@ -49,5 +51,13 @@ struct MachinesGridView: View {
 
     private func status(for machineId: String) -> MachineStatus {
         sessions.sessions.first(where: { $0.machineId == machineId })?.status ?? .disconnected
+    }
+
+    private var gridBlurb: String {
+        #if SKIP
+        "Add a profile, pick a Wayland client or SSH target, then connect."
+        #else
+        "Adaptive layout across iPhone, iPad, and Mac."
+        #endif
     }
 }

@@ -4,9 +4,10 @@ import WawonaModel
 
 // SKIP @bridge
 public struct WawonaRootView: View {
-    @StateObject private var preferences: WawonaPreferences
-    @StateObject private var profileStore: MachineProfileStore
-    @StateObject private var sessions: SessionOrchestrator
+    // internal: Skip Fuse `native` module bridging requires non-private observable state on Android.
+    @StateObject var preferences: WawonaPreferences
+    @StateObject var profileStore: MachineProfileStore
+    @StateObject var sessions: SessionOrchestrator
 
     public init() {
         _preferences = StateObject(wrappedValue: WawonaPreferences.shared)
@@ -33,7 +34,7 @@ public struct WawonaRootView: View {
     }
 
     #if SKIP && os(Android)
-    @State private var androidCompositorSession: MachineSession?
+    @State var androidCompositorSession: MachineSession?
 
     private var rootWithAndroidCompositorOverlay: some View {
         ZStack(alignment: .topLeading) {

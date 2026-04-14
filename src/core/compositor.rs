@@ -395,12 +395,15 @@ impl Compositor {
         
         tracing::info!("Stopping compositor - disconnecting {} clients", self.clients.len());
         
-        // Properly disconnect all clients by killing their connections
-        // This sends a clean disconnect rather than just dropping them
-        let client_count = self.clients.len();
-        for (client_id, _client_data) in self.clients.drain() {
-            tracing::debug!("Disconnecting client {}", client_id);
+        // Properly disconnect all clients by killing their connections.
+        let client_ids: Vec<u32> = self.clients.keys().copied().collect();
+        let client_count = client_ids.len();
+        for client_id in client_ids {
+            let _ = self.disconnect_client_by_internal(client_id);
         }
+
+        // Drop remaining local bookkeeping after disconnect requests.
+        self.clients.clear();
         
         // Flush any pending events to clients before shutdown
         // This ensures clients receive disconnect notifications
@@ -447,14 +450,46 @@ impl Compositor {
             let next_id = self.next_client_id;
             self.next_client_id += 1;
             
-            // Use a temporary empty client data to insert
-            struct PlaceholderClientData;
-            impl ClientData for PlaceholderClientData {
-                fn initialized(&self, _client_id: ClientId) {}
-                fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+            // Install disconnect-aware client data immediately so the backend
+            // callback queue remains accurate for all clients.
+            #[derive(Clone)]
+            struct ConnectedClientData {
+                internal_id: u32,
+                disconnected_queue: Arc<Mutex<Vec<ClientId>>>,
             }
-            
-            match display_handle.insert_client(stream, Arc::new(PlaceholderClientData)) {
+
+            impl ClientData for ConnectedClientData {
+                fn initialized(&self, client_id: ClientId) {
+                    tracing::info!(
+                        "Client {} initialized (backend id: {:?})",
+                        self.internal_id,
+                        client_id
+                    );
+                }
+
+                fn disconnected(&self, client_id: ClientId, reason: DisconnectReason) {
+                    let reason_str = match reason {
+                        DisconnectReason::ConnectionClosed => "connection closed",
+                        DisconnectReason::ProtocolError(_) => "protocol error",
+                    };
+                    tracing::info!(
+                        "Client {} disconnected: {} (backend id: {:?})",
+                        self.internal_id,
+                        reason_str,
+                        client_id
+                    );
+                    if let Ok(mut queue) = self.disconnected_queue.lock() {
+                        queue.push(client_id);
+                    }
+                }
+            }
+
+            let client_data_for_backend = ConnectedClientData {
+                internal_id: next_id,
+                disconnected_queue: self.disconnected_clients.clone(),
+            };
+
+            match display_handle.insert_client(stream, Arc::new(client_data_for_backend)) {
                 Ok(client) => {
                     let backend_id = client.id();
                     tracing::info!("Accepted client connection: {} (backend={:?})", next_id, backend_id);
@@ -676,6 +711,27 @@ impl Compositor {
     pub fn client_ids(&self) -> Vec<u32> {
         self.clients.keys().copied().collect()
     }
+
+    /// Forcefully disconnect a tracked client by internal ID.
+    pub fn disconnect_client_by_internal(&mut self, internal_id: u32) -> bool {
+        let Some(client_data) = self.clients.get(&internal_id).cloned() else {
+            tracing::warn!("Disconnect requested for unknown client {}", internal_id);
+            return false;
+        };
+
+        let backend_id = client_data.backend_id.clone();
+
+        let display_handle = self.display.handle();
+        tracing::info!(
+            "Force disconnecting client {} (backend={:?})",
+            internal_id,
+            backend_id
+        );
+        display_handle
+            .backend_handle()
+            .kill_client(backend_id.clone(), DisconnectReason::ConnectionClosed);
+        true
+    }
     
     // =========================================================================
     // Helpers
@@ -729,7 +785,6 @@ impl Compositor {
 
     /// Send ping to all shell clients and track for timeout
     pub fn ping_clients(&mut self, state: &mut CompositorState) {
-        let serial = self.next_serial();
         let now = Instant::now();
 
         // Check for timed-out pings (>10 seconds without pong)
@@ -747,10 +802,34 @@ impl Compositor {
             }
         }
 
-        // Send new pings
-        for ((client_id, resource_id), shell) in state.xdg.shell_resources.iter() {
+        // Snapshot shell resources to avoid mutable/immutable borrow conflicts
+        // while allocating serials and updating ping bookkeeping.
+        let shell_targets = state
+            .xdg
+            .shell_resources
+            .iter()
+            .map(|((client_id, resource_id), shell)| {
+                (client_id.clone(), *resource_id, shell.clone())
+            })
+            .collect::<Vec<_>>();
+
+        // Send new pings with unique serial per client/resource pair.
+        for (client_id, resource_id, shell) in shell_targets {
+            state.xdg.pending_pings.retain(|_, (cid, sid, _)| {
+                *cid != client_id || *sid != resource_id
+            });
+            let serial = self.next_serial();
             shell.ping(serial);
-            state.xdg.pending_pings.insert(serial, (client_id.clone(), *resource_id, now));
+            state
+                .xdg
+                .pending_pings
+                .insert(serial, (client_id.clone(), resource_id, now));
+            tracing::trace!(
+                "Sent xdg_wm_base ping: serial={}, client={:?}, shell={}",
+                serial,
+                client_id,
+                resource_id
+            );
         }
 
         // Check idle timeouts and send idled/resumed events
@@ -771,6 +850,20 @@ impl Default for Compositor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::net::UnixStream;
+    use std::sync::Arc;
+    use wayland_server::Display;
+
+    fn make_backend_client_id() -> ClientId {
+        let display = Display::<CompositorState>::new().unwrap();
+        let mut handle = display.handle();
+        let (server_sock, _client_sock) = UnixStream::pair().unwrap();
+        let client_data = crate::core::state::ClientState::default();
+        let client = handle
+            .insert_client(server_sock, Arc::new(client_data))
+            .unwrap();
+        client.id()
+    }
     
     #[test]
     fn test_config_default() {
@@ -786,5 +879,57 @@ mod tests {
         assert_eq!(compositor.next_serial(), 1);
         assert_eq!(compositor.next_serial(), 2);
         assert_eq!(compositor.next_serial(), 3);
+    }
+
+    #[test]
+    fn test_reconcile_disconnected_client_removes_client_and_emits_event() {
+        let mut compositor = Compositor::new_default().unwrap();
+        let mut state = CompositorState::new(None);
+        let backend_id = make_backend_client_id();
+        let internal_id = 7u32;
+
+        compositor.clients.insert(
+            internal_id,
+            WawonaClientData::new(
+                internal_id,
+                backend_id.clone(),
+                compositor.disconnected_clients.clone(),
+            ),
+        );
+
+        {
+            let mut queue = compositor.disconnected_clients.lock().unwrap();
+            queue.push(backend_id.clone());
+        }
+
+        compositor.reconcile_disconnected_clients(&mut state);
+
+        assert!(!compositor.clients.contains_key(&internal_id));
+        let events = compositor.take_events();
+        assert!(events.iter().any(|evt| matches!(
+            evt,
+            CompositorEvent::ClientDisconnected { client_id, internal_id: ev_internal }
+                if *client_id == backend_id && *ev_internal == internal_id
+        )));
+    }
+
+    #[test]
+    fn test_ping_clients_prunes_stale_pending_entries() {
+        let mut compositor = Compositor::new_default().unwrap();
+        let mut state = CompositorState::new(None);
+        let backend_id = make_backend_client_id();
+
+        state.xdg.pending_pings.insert(
+            42,
+            (
+                backend_id,
+                1,
+                Instant::now() - Duration::from_secs(11),
+            ),
+        );
+
+        compositor.ping_clients(&mut state);
+
+        assert!(state.xdg.pending_pings.is_empty());
     }
 }

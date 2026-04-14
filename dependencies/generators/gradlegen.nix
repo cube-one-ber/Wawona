@@ -21,6 +21,13 @@ let
   generateScript = pkgs.writeShellScriptBin "gradlegen" ''
     set -e
     OUT="${outDir}"
+    RUN_SKIP_EXPORT=0
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --run-skip-export) RUN_SKIP_EXPORT=1; shift ;;
+        *) break ;;
+      esac
+    done
 
     # Clean previous run (handles read-only Nix store copies)
     if [ -d "$OUT" ]; then
@@ -33,9 +40,6 @@ let
       echo "Copying full Android project (backend + native libs) to $OUT/..."
       cp -r ${projectPath}/* "$OUT/"
       chmod -R u+w "$OUT" 2>/dev/null || true
-      echo ""
-      echo "Project ready at $OUT/"
-      echo "Open $OUT/ in Android Studio and select device/emulator."
     else
       if [ -n "${toString wawonaSrc}" ] && [ -d "${toString wawonaSrc}/android" ]; then
         echo "Copying repository Android project to $OUT/..."
@@ -49,12 +53,54 @@ let
             echo "Merged Wawona launcher icon assets"
           fi
         '' else ""}
-        echo "Generated Android Studio project in $OUT/ from repository sources."
       else
         echo "ERROR: Could not locate android project sources under wawonaSrc."
         exit 1
       fi
     fi
+
+    # Trim generated project bloat for Android Studio import.
+    find "$OUT" -type d \( \
+      -name ".gradle" -o -name ".kotlin" -o -name ".idea" -o -name ".cxx" -o -name "build" \
+    \) -prune -exec rm -rf {} + 2>/dev/null || true
+    rm -f "$OUT/local.properties" 2>/dev/null || true
+
+    # Normalize Skip artifacts to <projectRoot>/Skip for IDE builds.
+    if [ -d "$OUT/android/Skip" ] && [ ! -d "$OUT/Skip" ]; then
+      mv "$OUT/android/Skip" "$OUT/Skip"
+    elif [ -d "$OUT/android/Skip" ] && [ -d "$OUT/Skip" ]; then
+      cp -R "$OUT/android/Skip/." "$OUT/Skip/" 2>/dev/null || true
+      rm -rf "$OUT/android/Skip"
+    fi
+
+    # If caller runs from repo root and already has fresh Skip artifacts, copy them.
+    if [ ! -d "$OUT/Skip" ] && [ -d "./android/Skip" ]; then
+      mkdir -p "$OUT/Skip"
+      cp -R ./android/Skip/. "$OUT/Skip/" 2>/dev/null || true
+    fi
+
+    if [ "$RUN_SKIP_EXPORT" -eq 1 ]; then
+      if [ ! -f "./Package.swift" ]; then
+        echo "ERROR: --run-skip-export requires running gradlegen from repo root (Package.swift missing)." >&2
+        exit 1
+      fi
+      if ! command -v skip >/dev/null 2>&1; then
+        echo "ERROR: skip CLI not found; install Skip or run without --run-skip-export." >&2
+        exit 1
+      fi
+      echo "Running skip export into $OUT/Skip ..."
+      mkdir -p "$OUT/Skip"
+      skip export --project . -d "$OUT/Skip" --verbose
+    fi
+
+    if [ ! -d "$OUT/Skip" ]; then
+      echo "NOTE: Skip artifacts were not found in generated project."
+      echo "      Run: cd \"$(pwd)\" && nix run .#gradlegen -- --run-skip-export"
+    fi
+
+    echo ""
+    echo "Project ready at $OUT/"
+    echo "Open $OUT/ in Android Studio and select device/emulator."
   '';
 
 in {

@@ -13,7 +13,7 @@ use wayland_protocols::xdg::xdg_output::zv1::server::{
 };
 
 
-use crate::core::state::CompositorState;
+use crate::core::state::{CompositorState, OutputState};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -219,6 +219,45 @@ pub fn notify_xdg_output_change_for_client(
                 output_state.width,
                 output_state.height,
                 output_state.refresh / 1000
+            ));
+        }
+        if xdg_output.version() >= 3 {
+            xdg_output.done();
+        }
+    }
+}
+
+/// Send logical size / position from a synthetic [`crate::core::state::OutputState`] view
+/// (e.g. per-window override) to one client's `zxdg_output_v1` resources for that output.
+pub fn notify_xdg_output_change_for_client_override(
+    state: &CompositorState,
+    client_id: &wayland_server::backend::ClientId,
+    output_view: &OutputState,
+) {
+    for ((cid, xdg_output_id), xdg_output) in &state.xdg.output.resources {
+        if cid != client_id || !xdg_output.is_alive() {
+            continue;
+        }
+        let Some(data) = state.xdg.output.outputs.get(&(cid.clone(), *xdg_output_id)) else {
+            continue;
+        };
+        if data.output_id != output_view.id {
+            continue;
+        }
+
+        let lw = output_view.width as i32;
+        let lh = output_view.height as i32;
+
+        xdg_output.logical_position(output_view.x, output_view.y);
+        xdg_output.logical_size(lw, lh);
+        if xdg_output.version() >= 2 {
+            xdg_output.name(output_view.name.clone());
+            xdg_output.description(format!(
+                "{} ({}x{} @ {}Hz)",
+                output_view.name,
+                output_view.width,
+                output_view.height,
+                output_view.refresh / 1000
             ));
         }
         if xdg_output.version() >= 3 {

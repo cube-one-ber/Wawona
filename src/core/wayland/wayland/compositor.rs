@@ -129,7 +129,7 @@ impl Dispatch<wl_surface::WlSurface, u32> for CompositorState {
                 crate::wtrace!(crate::util::logging::COMPOSITOR, "Surface {} damage (buffer): x={}, y={}, width={}, height={}", id, x, y, width, height);
                 if let Some(surface) = state.get_surface(id) {
                     let mut surface = surface.write().unwrap();
-                    surface.pending.damage.push(crate::core::surface::damage::DamageRegion {
+                    surface.pending.buffer_damage.push(crate::core::surface::damage::DamageRegion {
                         x, y, width, height
                     });
                 }

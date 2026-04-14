@@ -11,8 +11,17 @@ struct GlassCard<Content: View>: View {
 
     var body: some View {
 #if SKIP
-        content
-            .padding(14)
+        // Skip/Android: no `.glassEffect` / material stack; approximate card chrome for parity with iOS.
+        ZStack {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+            content
+                .padding(14)
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+        )
 #else
         ZStack {
             if #available(macOS 26, iOS 26, *) {

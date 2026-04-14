@@ -570,8 +570,7 @@ typedef NS_ENUM(NSInteger, WWNTouchInputMode) {
     _cursorIndex = 0;
     _markedRange = NSMakeRange(NSNotFound, 0);
     _selectedRange = NSMakeRange(0, 0);
-    _textAssistEnabled =
-        [[WWNPreferencesManager sharedManager] enableTextAssist];
+    _textAssistEnabled = YES;
 
     // Cursor layer for touchpad mode — hidden by default.
     // It renders the Wayland client's cursor image.
@@ -1063,15 +1062,12 @@ static const NSTimeInterval kDoubleTapThreshold = 0.4;
 }
 
 - (BOOL)becomeFirstResponder {
-  // Re-read text assist setting before activating keyboard so changes
-  // in Settings take effect the next time the keyboard appears.
-  _textAssistEnabled = [[WWNPreferencesManager sharedManager] enableTextAssist];
+  _textAssistEnabled = YES;
 
   BOOL result = [super becomeFirstResponder];
   if (result) {
-    WWNLog("IOS_VIEW",
-           @"Became first responder for window %llu (textAssist=%d)",
-           self.wwnWindowId, _textAssistEnabled);
+    WWNLog("IOS_VIEW", @"Became first responder for window %llu",
+           self.wwnWindowId);
     _keyboardActive = YES;
 
     [[WWNCompositorBridge sharedBridge] setWindowActivated:self.wwnWindowId

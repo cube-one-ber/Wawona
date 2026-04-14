@@ -11,6 +11,7 @@
 
 use std::sync::{Arc, RwLock, Mutex};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
 use crate::ffi::types;
 
@@ -50,6 +51,15 @@ pub struct WawonaCore {
     
     /// Output configuration (cached for FFI access)
     output_size: RwLock<(u32, u32, f32)>,
+
+    /// Last (w, h, scale×1000) sent via [`Self::set_output_geometry_for_window`] per window.
+    per_window_output_notify: RwLock<HashMap<u64, (u32, u32, u32)>>,
+
+    /// Next host resize transaction id (monotonic).
+    next_resize_transaction_id: Mutex<u64>,
+
+    /// Latest pending resize transaction keyed by window id.
+    pending_resize_transactions: RwLock<HashMap<u64, ResizeTransaction>>,
     
     /// Force server-side decorations
     force_ssd: RwLock<bool>,
@@ -86,6 +96,9 @@ pub struct WawonaCore {
     
     /// IPC Server (for CLI tools)
     ipc_server: Mutex<Option<crate::core::ipc::IpcServer>>,
+
+    /// Scene fingerprint used for redraw gating.
+    last_scene_fingerprint: RwLock<u64>,
 }
 
 /// Translate platform view-local coordinates to surface-local coordinates
@@ -106,6 +119,59 @@ fn apply_geometry_offset(
     (x, y)
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameCallbackFlushPoint {
+    SurfaceCommitted,
+    FramePresented,
+    FrameComplete,
+}
+
+fn should_flush_frame_callbacks(point: FrameCallbackFlushPoint) -> bool {
+    matches!(point, FrameCallbackFlushPoint::FramePresented)
+}
+
+impl WawonaCore {
+    fn begin_resize_transaction(
+        &self,
+        window_id: WindowId,
+        configure_serial: u32,
+        cause: WindowSizeCause,
+        requested_size: Size,
+        size_kind: GeometrySizeKind,
+    ) -> ResizeTransaction {
+        let mut next = self.next_resize_transaction_id.lock().unwrap();
+        let txn = ResizeTransaction {
+            id: *next,
+            window_id,
+            configure_serial,
+            cause,
+            requested_size,
+            size_kind,
+        };
+        *next = next.wrapping_add(1);
+        self.pending_resize_transactions
+            .write()
+            .unwrap()
+            .insert(window_id.id, txn.clone());
+        txn
+    }
+
+    fn take_resize_transaction_for_size(
+        &self,
+        window_id: WindowId,
+        width: u32,
+        height: u32,
+    ) -> Option<ResizeTransaction> {
+        let mut pending = self.pending_resize_transactions.write().unwrap();
+        let txn = pending.get(&window_id.id)?.clone();
+        if txn.requested_size.width == width && txn.requested_size.height == height {
+            return pending.remove(&window_id.id);
+        }
+        None
+    }
+}
+
 #[uniffi::export]
 impl WawonaCore {
     // =========================================================================
@@ -122,6 +188,9 @@ impl WawonaCore {
             runtime: Mutex::new(Runtime::new()),
             state: Arc::new(RwLock::new(CompositorState::new(None))), // Default for now, updated in start()
             output_size: RwLock::new((1920, 1080, 1.0)),
+            per_window_output_notify: RwLock::new(HashMap::new()),
+            next_resize_transaction_id: Mutex::new(1),
+            pending_resize_transactions: RwLock::new(HashMap::new()),
             force_ssd: RwLock::new(false),
             advertise_fullscreen_shell: RwLock::new(false),
             ffi_windows: RwLock::new(HashMap::new()),
@@ -134,6 +203,7 @@ impl WawonaCore {
             pending_buffers: RwLock::new(HashMap::new()),
             pending_redraws: RwLock::new(Vec::new()),
             ipc_server: Mutex::new(None),
+            last_scene_fingerprint: RwLock::new(0),
         })
     }
     
@@ -311,6 +381,7 @@ impl WawonaCore {
         self.pending_buffers.write().unwrap().clear();
         self.pending_buffers.write().unwrap().clear();
         self.pending_redraws.write().unwrap().clear();
+        *self.last_scene_fingerprint.write().unwrap() = 0;
         
         // Stop IPC server
         *self.ipc_server.lock().unwrap() = None;
@@ -805,11 +876,22 @@ impl WawonaCore {
                     info.width = width;
                     info.height = height;
                 }
+                let window_id_ffi = WindowId { id: window_id as u64 };
+                let txn = self.take_resize_transaction_for_size(window_id_ffi, width, height);
+                let (cause, size_kind, configure_serial, transaction_id) = if let Some(txn) = txn {
+                    (txn.cause, txn.size_kind, txn.configure_serial, txn.id)
+                } else {
+                    (WindowSizeCause::ClientCommit, GeometrySizeKind::Content, 0, 0)
+                };
                 self.pending_window_events.write().unwrap().push(
                     WindowEvent::SizeChanged {
-                        window_id: WindowId { id: window_id as u64 },
+                        window_id: window_id_ffi,
                         width,
                         height,
+                        cause,
+                        size_kind,
+                        configure_serial,
+                        transaction_id,
                     }
                 );
             }
@@ -852,6 +934,7 @@ impl WawonaCore {
                 // Track commits per surface
                 thread_local! {
                     static SURFACE_COMMITS: std::cell::RefCell<std::collections::HashMap<(u32, u32), u32>> = Default::default();
+                    static SURFACE_NO_BUFFER_COMMITS: std::cell::RefCell<std::collections::HashMap<(u32, u32), u32>> = Default::default();
                 }
                 let commit_count = SURFACE_COMMITS.with(|commits| {
                     let mut map = commits.borrow_mut();
@@ -866,7 +949,34 @@ impl WawonaCore {
                 let buffer_id = if let Some(bid) = buffer_id {
                     bid as u32
                 } else {
-                    crate::wlog!(crate::util::logging::FFI, "FFI: SurfaceCommitted with no buffer_id");
+                    let (flushed_count, no_buffer_count) = {
+                        let mut state = self.state.write().unwrap();
+                        let callback_count = state
+                            .frame_callbacks
+                            .get(&surface_id)
+                            .map(|cbs| cbs.len())
+                            .unwrap_or(0);
+                        if callback_count > 0 {
+                            state.flush_frame_callbacks(
+                                surface_id,
+                                Some(crate::core::state::CompositorState::get_timestamp_ms()),
+                            );
+                        }
+                        let no_buffer_count = SURFACE_NO_BUFFER_COMMITS.with(|counts| {
+                            let mut map = counts.borrow_mut();
+                            let count = map.entry((internal_client_id, surface_id)).or_insert(0);
+                            *count += 1;
+                            *count
+                        });
+                        (callback_count, no_buffer_count)
+                    };
+                    crate::wlog!(
+                        crate::util::logging::FFI,
+                        "SurfaceCommitted: surf={} buf=<none> frame_cbs_flushed={} no_buffer_commits={}",
+                        surface_id,
+                        flushed_count,
+                        no_buffer_count
+                    );
                     return;
                 };
                 
@@ -1068,12 +1178,24 @@ impl WawonaCore {
                         }
                     }
                     
-                    let has_frame_cbs = state.frame_callbacks.contains_key(&surface_id);
-                    state.flush_frame_callbacks(surface_id, Some(crate::core::state::CompositorState::get_timestamp_ms()));
+                    let callback_count = state
+                        .frame_callbacks
+                        .get(&surface_id)
+                        .map(|cbs| cbs.len())
+                        .unwrap_or(0);
+                    if callback_count > 0 {
+                        // Safety-net for animation clients that block until frame_done.
+                        // Presentation path still flushes callbacks too, but this avoids
+                        // first-frame stalls when presentation ack is delayed/missed.
+                        state.flush_frame_callbacks(
+                            surface_id,
+                            Some(crate::core::state::CompositorState::get_timestamp_ms()),
+                        );
+                    }
 
                     crate::wlog!(crate::util::logging::FFI,
-                        "SurfaceCommitted: surf={} buf={} frame_cbs={}",
-                        surface_id, buffer_id, has_frame_cbs);
+                        "SurfaceCommitted: surf={} buf={} frame_cbs_flushed={}",
+                        surface_id, buffer_id, callback_count);
                 }
             }
             CompositorEvent::LayerSurfaceCommitted { client_id, surface_id, buffer_id } => {
@@ -1388,10 +1510,26 @@ impl WawonaCore {
         let client_id = state.surfaces.get(&surface_id.id)
             .and_then(|s| s.read().unwrap().client_id.clone());
 
-        let has_callbacks = state.frame_callbacks.contains_key(&surface_id.id);
+        let callback_count = state
+            .frame_callbacks
+            .get(&surface_id.id)
+            .map(|cbs| cbs.len())
+            .unwrap_or(0);
         let pending_releases = state.pending_buffer_releases.len();
             
-        state.flush_frame_callbacks(surface_id.id, Some(timestamp));
+        if should_flush_frame_callbacks(FrameCallbackFlushPoint::FramePresented) {
+            state.flush_frame_callbacks(surface_id.id, Some(timestamp));
+        }
+        thread_local! {
+            static SURFACE_PRESENTED_COUNTS: std::cell::RefCell<std::collections::HashMap<u32, u32>> = Default::default();
+            static SURFACE_RELEASE_COUNTS: std::cell::RefCell<std::collections::HashMap<u32, u32>> = Default::default();
+        }
+        let presented_count = SURFACE_PRESENTED_COUNTS.with(|counts| {
+            let mut map = counts.borrow_mut();
+            let count = map.entry(surface_id.id).or_insert(0);
+            *count += 1;
+            *count
+        });
 
         let timestamp_ns = (timestamp as u64) * 1_000_000;
         let refresh_ns: u64 = 1_000_000_000 / 60;
@@ -1410,14 +1548,30 @@ impl WawonaCore {
             if let Some(cid) = client_id {
                 let buffer_id_u32 = buf_id.id as u32;
                 state.release_buffer(cid, buffer_id_u32);
+                let release_count = SURFACE_RELEASE_COUNTS.with(|counts| {
+                    let mut map = counts.borrow_mut();
+                    let count = map.entry(surface_id.id).or_insert(0);
+                    *count += 1;
+                    *count
+                });
                 crate::wlog!(crate::util::logging::FFI,
-                    "FramePresented: surf={} buf={} released=true callbacks_flushed={} pending_releases_before={}",
-                    surface_id.id, buf_id.id, has_callbacks, pending_releases);
+                    "FramePresented: surf={} buf={} released=true callbacks_flushed={} callback_count={} presented_total={} release_total={} pending_releases_before={}",
+                    surface_id.id, buf_id.id, callback_count > 0, callback_count, presented_count, release_count, pending_releases);
             } else {
                 crate::wlog!(crate::util::logging::FFI,
                     "FramePresented: surf={} buf={} — no client_id, buffer NOT released",
                     surface_id.id, buf_id.id);
             }
+        } else {
+            crate::wtrace!(
+                crate::util::logging::FFI,
+                "FramePresented: surf={} buf=<none> callbacks_flushed={} callback_count={} presented_total={} pending_releases_before={}",
+                surface_id.id,
+                callback_count > 0,
+                callback_count,
+                presented_count,
+                pending_releases
+            );
         }
     }
     
@@ -1498,7 +1652,23 @@ impl WawonaCore {
                 wid, width, height, tid.1);
 
             let mut state = self.state.write().unwrap();
-            state.send_toplevel_configure(tid.0.clone(), tid.1, width, height);
+            let serial = state.send_toplevel_configure(tid.0.clone(), tid.1, width, height);
+            let txn = self.begin_resize_transaction(
+                WindowId { id: window_id.id },
+                serial,
+                WindowSizeCause::HostConfigure,
+                Size { width, height },
+                GeometrySizeKind::Content,
+            );
+            crate::wlog!(
+                crate::util::logging::FFI,
+                "Resize transaction started: id={} window={} serial={} requested={}x{}",
+                txn.id,
+                window_id.id,
+                txn.configure_serial,
+                txn.requested_size.width,
+                txn.requested_size.height
+            );
         } else if is_fullscreen_shell {
             crate::wlog!(crate::util::logging::FFI,
                 "Window resize: window={} {}x{}, fullscreen_shell - updating global output mode",
@@ -1550,15 +1720,33 @@ impl WawonaCore {
                  .map(|(id, _)| id.clone());
 
              if let Some(tid) = toplevel_id {
-                 let (w, h) = if let Some(td) = state.xdg.toplevels.get_mut(&tid) {
+                 let (mut w, mut h) = if let Some(td) = state.xdg.toplevels.get_mut(&tid) {
                      td.activated = active;
                      (td.width, td.height)
                  } else {
                      return;
                  };
 
+                 if w == 0 && h == 0 {
+                     if let Some(window) = state.get_window(wid) {
+                         let ww = window.read().unwrap();
+                         if ww.width > 0 && ww.height > 0 {
+                             w = ww.width as u32;
+                             h = ww.height as u32;
+                         }
+                     }
+                 }
+
                  if send_configure {
-                     state.send_toplevel_configure(tid.0.clone(), tid.1, w, h);
+                     if w == 0 && h == 0 {
+                         crate::wlog!(
+                             crate::util::logging::FFI,
+                             "Set window activation: skip configure (no size yet) window={}",
+                             window_id.id
+                         );
+                     } else {
+                         state.send_toplevel_configure(tid.0.clone(), tid.1, w, h);
+                     }
                  }
              }
         }
@@ -2103,15 +2291,37 @@ impl WawonaCore {
         state.build_scene();
         
         let flattened_scene = state.scene.flatten();
+        state.scene_damage.clear();
+        for surface in &flattened_scene {
+            let consumed_damage = if let Some(surface_ref) = state.get_surface(surface.surface_id) {
+                let mut surf = surface_ref.write().unwrap();
+                if surf.current.damage.is_empty() {
+                    None
+                } else {
+                    Some(std::mem::take(&mut surf.current.damage))
+                }
+            } else {
+                None
+            };
+
+            if let Some(surface_damage) = consumed_damage {
+                state.scene_damage.add_surface_damage(
+                    surface.x,
+                    surface.y,
+                    surface.scale,
+                    &surface_damage,
+                );
+            }
+        }
         let global_damage = state.scene_damage.global_damage.clone();
-        
-        // Clear global damage after it's been consumed for rendering
         state.scene_damage.clear();
         
         // 2. Map internal FlattenedSurface to FFI RenderNode
         let mut ffi_nodes = Vec::new();
         let ffi_textures = self.textures.read().unwrap();
         let mut current_anchor: (u32, i32, i32) = (0, 0, 0);
+        let mut scene_hasher = std::collections::hash_map::DefaultHasher::new();
+        flattened_scene.len().hash(&mut scene_hasher);
         
         for surface in flattened_scene {
             // Resolve window ID (walks subsurface tree for subsurfaces)
@@ -2122,20 +2332,22 @@ impl WawonaCore {
                 current_anchor = (window_id, surface.x, surface.y);
             }
             
-            // Get texture handle
-            // Fallback to buffer_id from surface current state if not in textures cache
-            let texture_handle = if let Some(handle) = ffi_textures.get(&(surface.surface_id as u64)) {
-                *handle
-            } else if let Some(surf_ref) = state.get_surface(surface.surface_id) {
+            // Texture cache is keyed by wl_buffer id (not surface id).
+            let texture_handle = if let Some(surf_ref) = state.get_surface(surface.surface_id) {
                 let surf = surf_ref.read().unwrap();
-                // ClientId doesn't easily map to an integer anymore.
-                // We just use 0 for FFI TextureHandle client grouping, since
-                // it's mostly unused by the platform side renderer.
-                let internal_client_id = 0;
-                TextureHandle::new(
-                    surf.current.buffer_id.unwrap_or(0) as u64,
-                    types::ClientId { id: internal_client_id }
-                )
+                let buffer_id = surf.current.buffer_id.unwrap_or(0) as u64;
+                if let Some(handle) = ffi_textures.get(&buffer_id) {
+                    *handle
+                } else {
+                    // ClientId doesn't easily map to an integer anymore.
+                    // We just use 0 for FFI TextureHandle client grouping, since
+                    // it's mostly unused by the platform side renderer.
+                    let internal_client_id = 0;
+                    TextureHandle::new(
+                        buffer_id,
+                        types::ClientId { id: internal_client_id }
+                    )
+                }
             } else {
                 TextureHandle::null()
             };
@@ -2158,16 +2370,31 @@ impl WawonaCore {
             node.anchor_output_x = current_anchor.1;
             node.anchor_output_y = current_anchor.2;
             node.content_rect = surface.content_rect;
+
+            window_id.hash(&mut scene_hasher);
+            surface.surface_id.hash(&mut scene_hasher);
+            surface.x.hash(&mut scene_hasher);
+            surface.y.hash(&mut scene_hasher);
+            surface.width.hash(&mut scene_hasher);
+            surface.height.hash(&mut scene_hasher);
+            surface.opacity.to_bits().hash(&mut scene_hasher);
+            surface.scale.to_bits().hash(&mut scene_hasher);
+            node.texture.handle.hash(&mut scene_hasher);
             
             ffi_nodes.push(node);
         }
+        let scene_fingerprint = scene_hasher.finish();
+        let mut last_fingerprint = self.last_scene_fingerprint.write().unwrap();
+        let scene_changed = scene_fingerprint != *last_fingerprint;
+        *last_fingerprint = scene_fingerprint;
+        let has_damage = !global_damage.is_empty();
         
         RenderScene {
             nodes: ffi_nodes,
             width,
             height,
             scale,
-            needs_redraw: true,
+            needs_redraw: scene_changed || has_damage,
             damage: global_damage.into_iter().map(|r| Rect::new(r.x, r.y, r.width, r.height)).collect(),
         }
     }
@@ -2184,17 +2411,17 @@ impl WawonaCore {
         
         let mut state = self.state.write().unwrap();
         
-        // 1. Send wl_surface.frame callbacks
-        state.flush_all_frame_callbacks();
-        
-        // 2. Send wp_presentation feedback events
+        // 1. Send wp_presentation feedback events.
+        // wl_surface.frame callbacks are emitted per-surface from
+        // notify_frame_presented() to keep callback timing aligned with actual
+        // surface presentation.
         let refresh_ns = 1_000_000_000 / 60; // TODO: Use actual refresh rate from output
         state.ext.presentation.send_presented_events(timestamp_ns, refresh_ns, seq);
         
-        // 3. Flush buffer releases
+        // 2. Flush buffer releases
         state.flush_buffer_releases();
         
-        // 4. Update runtime timing
+        // 3. Update runtime timing
         let mut runtime = self.runtime.lock().unwrap();
         runtime.end_frame();
     }
@@ -2224,8 +2451,7 @@ impl WawonaCore {
         // Mark frame complete in runtime
         self.runtime.lock().unwrap().end_frame();
         
-        // Flush frame callbacks
-        self.state.write().unwrap().flush_all_frame_callbacks();
+        // Frame callbacks are flushed from notify_frame_presented(), not here.
     }
     
     /// Notify frame complete for specific window
@@ -2236,17 +2462,8 @@ impl WawonaCore {
         
         crate::wlog!(crate::util::logging::FFI, "Window frame complete: window={}", window_id.id);
         
-        // Find surfaces for this window and flush their callbacks
-        let surface_id = {
-            let state = self.state.read().unwrap();
-            state.surface_to_window.iter()
-                .find(|(_, &wid)| wid as u64 == window_id.id)
-                .map(|(sid, _)| *sid)
-        };
-        
-        if let Some(surface_id) = surface_id {
-            self.state.write().unwrap().flush_frame_callbacks(surface_id, None);
-        }
+        // Callbacks are now flushed from notify_frame_presented(surface, ...),
+        // which is aligned to actual presentation timing.
     }
     
     /// Flush frame callbacks immediately
@@ -2267,7 +2484,11 @@ impl WawonaCore {
     /// 1. Updates the internal output state
     /// 2. Sends wl_output.mode / .geometry / .done to all bound output resources
     /// 3. Sends xdg_output logical_size changes
-    /// 4. Reconfigures every xdg_toplevel to the new output dimensions
+    ///
+    /// Does **not** emit `xdg_toplevel.configure` for every surface: each window keeps
+    /// its own dimensions via [`resize_window`](Self::resize_window) / initial setup.
+    /// Broadcasting one global size to all toplevels broke multi-window macOS sessions
+    /// (e.g. opening a second client forced every existing client to the new output size).
     pub fn set_output_size(&self, width: u32, height: u32, scale: f32) {
         let safe_scale = if scale < 1.0 { 1.0 } else { scale };
 
@@ -2284,15 +2505,10 @@ impl WawonaCore {
         *self.output_size.write().unwrap() = (width, height, safe_scale);
 
         let output_id;
-        let toplevel_ids: Vec<(wayland_server::backend::ClientId, u32)>;
 
         {
             let mut state = self.state.write().unwrap();
-            
-            toplevel_ids = state.xdg.toplevels.keys().cloned().collect();
-            
             state.set_output_size(width, height, safe_scale);
-
             output_id = state.outputs.first().map(|o| o.id).unwrap_or(0);
         }
 
@@ -2302,16 +2518,113 @@ impl WawonaCore {
             crate::core::wayland::wayland::output::notify_output_change(&state, output_id);
 
             crate::wlog!(crate::util::logging::FFI,
-                "Output resized {}x{}@{}x → {}x{}@{}x, reconfiguring {} toplevels",
-                prev_w, prev_h, prev_s, width, height, safe_scale, toplevel_ids.len());
+                "Output resized {}x{}@{}x → {}x{}@{}x (wl_output broadcast; toplevels unchanged)",
+                prev_w, prev_h, prev_s, width, height, safe_scale);
+        }
+    }
 
-            drop(state);
+    /// Like [`set_output_size`](Self::set_output_size), but notifies **only** the Wayland
+    /// client that owns `window_id` of `wl_output` / `xdg_output` changes.
+    ///
+    /// Used on macOS when placing a nested compositor in a smaller host window: the
+    /// owning process must see `wl_output.mode` match its drawable area, without
+    /// pushing that mode change to every other connected client.
+    pub fn set_output_geometry_for_window(&self, window_id: WindowId, width: u32, height: u32, scale: f32) {
+        let safe_scale = if scale < 1.0 { 1.0 } else { scale };
+        let wid = window_id.id as u32;
+        let wkey = window_id.id;
+        let scale_key = (safe_scale * 1000.0).round() as u32;
 
-            let mut state = self.state.write().unwrap();
-            for tid in toplevel_ids {
-                state.send_toplevel_configure(tid.0.clone(), tid.1, width, height);
+        {
+            let cache = self.per_window_output_notify.read().unwrap();
+            if let Some(&(pw, ph, pk)) = cache.get(&wkey) {
+                if pw == width && ph == height && pk == scale_key {
+                    return;
+                }
             }
         }
+
+        crate::wlog!(
+            crate::util::logging::FFI,
+            "Output geometry (for window {}): {}x{} @ {}x (per-client wl_output only)",
+            wid,
+            width,
+            height,
+            safe_scale
+        );
+        self.begin_resize_transaction(
+            window_id,
+            0,
+            WindowSizeCause::OutputModeChange,
+            Size { width, height },
+            GeometrySizeKind::Content,
+        );
+
+        let (output_id, owner_client) = {
+            let state = self.state.read().unwrap();
+            let oid = state.outputs.first().map(|o| o.id).unwrap_or(0);
+            let cid = state
+                .xdg
+                .toplevels
+                .iter()
+                .find(|(_, d)| d.window_id == wid)
+                .map(|(k, _)| k.0.clone());
+            (oid, cid)
+        };
+
+        if let Some(ref cid) = owner_client {
+            let state = self.state.read().unwrap();
+            crate::core::wayland::wayland::output::notify_output_change_for_client_override(
+                &state,
+                output_id,
+                cid,
+                width,
+                height,
+                safe_scale,
+            );
+            crate::wlog!(
+                crate::util::logging::FFI,
+                "wl_output/xdg_output override → client {:?} only ({}x{} @ {}x); global output unchanged",
+                cid,
+                width,
+                height,
+                safe_scale
+            );
+        } else {
+            let (prev_w, prev_h, prev_s) = {
+                let cur = self.output_size.read().unwrap();
+                (cur.0, cur.1, cur.2)
+            };
+
+            if prev_w == width && prev_h == height && (prev_s - safe_scale).abs() < 0.001 {
+                return;
+            }
+
+            *self.output_size.write().unwrap() = (width, height, safe_scale);
+            {
+                let mut state = self.state.write().unwrap();
+                state.set_output_size(width, height, safe_scale);
+            }
+
+            let state = self.state.read().unwrap();
+            crate::core::wayland::wayland::output::notify_output_change(&state, output_id);
+            crate::wlog!(
+                crate::util::logging::FFI,
+                "Output resized {}x{}@{}x → {}x{}@{}x (no toplevel for window {}; global wl_output)",
+                prev_w,
+                prev_h,
+                prev_s,
+                width,
+                height,
+                safe_scale,
+                wid
+            );
+        }
+
+        self.per_window_output_notify
+            .write()
+            .unwrap()
+            .insert(wkey, (width, height, scale_key));
     }
     
     /// Set platform safe area insets on the primary output.
@@ -2414,13 +2727,51 @@ impl WawonaCore {
         }
     }
     
-    /// Request window close
-    pub fn request_window_close(&self, window_id: WindowId) {
+    /// Ask the Wayland client to close this toplevel (`xdg_toplevel.close`) and flush.
+    /// Returns `true` if a matching xdg_toplevel was found.
+    pub fn request_window_close(&self, window_id: WindowId) -> bool {
         if !self.is_running() {
-            return;
+            return false;
         }
-        crate::wlog!(crate::util::logging::FFI, "Request window close: {}", window_id.id);
-        // TODO: Send xdg_toplevel::close
+        crate::wlog!(
+            crate::util::logging::FFI,
+            "Request window close (xdg_toplevel.close): {}",
+            window_id.id
+        );
+        let sent = {
+            let mut state = self.state.write().unwrap();
+            state.send_toplevel_close_for_window(window_id.id as u32)
+        };
+        self.flush_clients();
+        sent
+    }
+
+    /// Tear down compositor-side window state immediately (no `xdg_toplevel.close`).
+    /// Drains `pending_compositor_events` from `destroy_window` so FFI/host state stays consistent.
+    /// Use when soft close stalls (client assert/hang/ignore).
+    pub fn force_destroy_host_window(&self, window_id: WindowId) -> bool {
+        if !self.is_running() {
+            return false;
+        }
+        let wid = window_id.id as u32;
+        crate::wlog!(
+            crate::util::logging::FFI,
+            "Force destroy host window: {}",
+            window_id.id
+        );
+        let pending = {
+            let mut state = self.state.write().unwrap();
+            if state.get_window(wid).is_none() {
+                return false;
+            }
+            state.destroy_window(wid);
+            std::mem::take(&mut state.pending_compositor_events)
+        };
+        for event in pending {
+            self.handle_compositor_event(event);
+        }
+        self.flush_clients();
+        true
     }
     
     /// Start interactive move
@@ -2471,12 +2822,13 @@ impl WawonaCore {
             return;
         }
         crate::wlog!(crate::util::logging::FFI, "Disconnect client: {}", client_id.id);
-        // TODO: Disconnect client from Wayland display
-        
-        self.ffi_clients.write().unwrap().remove(&client_id.id);
-        self.pending_client_events.write().unwrap().push(
-            ClientEvent::Disconnected { client_id }
-        );
+        if let Some(compositor) = self.compositor.lock().unwrap().as_mut() {
+            if compositor.disconnect_client_by_internal(client_id.id as u32) {
+                // Drive cleanup promptly; natural callbacks will still reconcile.
+                let mut state = self.state.write().unwrap();
+                let _ = compositor.dispatch(&mut state);
+            }
+        }
     }
     
     // =========================================================================
@@ -2741,7 +3093,9 @@ impl WawonaCore {
         let (width, height, stride, format, iosurface_id) =
             if let Some(surface_ref) = state.surfaces.get(&cursor_sid) {
                 let surface = surface_ref.read().unwrap();
-                let client_id = surface.client_id.clone().unwrap(); // Cursor surface always has client
+                let Some(client_id) = surface.client_id.clone() else {
+                    return types::CursorRenderInfo::default();
+                };
                 if let Some(buf_ref) = state.buffers.get(&(client_id, buffer_id as u32)) {
                     let buf = buf_ref.read().unwrap();
                     match &buf.buffer_type {
@@ -2774,6 +3128,7 @@ impl WawonaCore {
             y: pointer.y as f32,
             hotspot_x: pointer.cursor_hotspot_x as f32,
             hotspot_y: pointer.cursor_hotspot_y as f32,
+            surface_id: cursor_sid,
             buffer_id,
             width,
             height,
@@ -2852,6 +3207,24 @@ pub fn build_info() -> String {
         "1.75+",
         std::env::consts::ARCH,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_callbacks_only_flush_on_presentation_point() {
+        assert!(!should_flush_frame_callbacks(
+            FrameCallbackFlushPoint::SurfaceCommitted
+        ));
+        assert!(should_flush_frame_callbacks(
+            FrameCallbackFlushPoint::FramePresented
+        ));
+        assert!(!should_flush_frame_callbacks(
+            FrameCallbackFlushPoint::FrameComplete
+        ));
+    }
 }
 
 // Note: UniFFI scaffolding is generated in lib.rs

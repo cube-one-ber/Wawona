@@ -20,9 +20,9 @@ private const val BTN_RIGHT = 0x111
  * which routes committed text and composition to the Wawona compositor
  * through JNI -> Rust -> Wayland text-input-v3.
  *
- * When "Enable Text Assist" is on, the view configures the IME for
- * autocorrect, text suggestions, auto-capitalize, and swipe-to-type.
- * When "Enable Dictation" is also on, voice input flags are included.
+ * The view advertises generic text editing capabilities to Android IME and
+ * lets the host keyboard decide autocorrect, suggestions, capitalization,
+ * and dictation behavior.
  *
  * Touchpad mode: 1-finger = pointer, tap = click, 2-finger drag = scroll.
  */
@@ -52,27 +52,9 @@ class WawonaSurfaceView(context: Context) : SurfaceView(context) {
     }
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
-        val prefs = context.getSharedPreferences("wawona_prefs", Context.MODE_PRIVATE)
-        val textAssist = prefs.getBoolean("enableTextAssist", false)
-        val dictation = prefs.getBoolean("enableDictation", false)
-
-        if (textAssist) {
-            outAttrs.inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or
-                InputType.TYPE_TEXT_FLAG_AUTO_COMPLETE or
-                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN or
-                EditorInfo.IME_ACTION_UNSPECIFIED
-            if (dictation) {
-                outAttrs.imeOptions = outAttrs.imeOptions or
-                    EditorInfo.IME_FLAG_NO_EXTRACT_UI
-            }
-        } else {
-            outAttrs.inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN or
-                EditorInfo.IME_FLAG_NO_EXTRACT_UI
-        }
+        outAttrs.inputType = InputType.TYPE_CLASS_TEXT
+        outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN or
+            EditorInfo.IME_ACTION_UNSPECIFIED
 
         return WawonaInputConnection(this, true)
     }

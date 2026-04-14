@@ -77,14 +77,14 @@ NSString *const kWWNPrefsSSHPassword = @"SSHPassword";
 NSString *const kWWNPrefsSSHKeyPath = @"SSHKeyPath";
 NSString *const kWWNPrefsSSHKeyPassphrase = @"SSHKeyPassphrase";
 NSString *const kWWNPrefsWaypipeUseSSHConfig = @"WaypipeUseSSHConfig";
-NSString *const kWWNPrefsEnableTextAssist = @"EnableTextAssist";
-NSString *const kWWNPrefsEnableDictation = @"EnableDictation";
 NSString *const kWWNForceSSDChangedNotification =
     @"WWNForceSSDChangedNotification";
 NSString *const kWWNPrefsWestonSimpleSHMEnabled = @"WestonSimpleSHMEnabled";
 NSString *const kWWNPrefsWestonEnabled = @"WestonEnabled";
 NSString *const kWWNPrefsWestonTerminalEnabled = @"WestonTerminalEnabled";
 NSString *const kWWNPrefsFootEnabled = @"FootEnabled";
+NSString *const kWWNPrefsMachineSessionThumbnailsEnabled =
+    @"MachineSessionThumbnailsEnabled";
 
 static NSString *WWNPreferredSharedRuntimeDir(void) {
 #if TARGET_OS_IPHONE || TARGET_OS_SIMULATOR
@@ -230,19 +230,10 @@ static NSString *WWNPreferredSharedRuntimeDir(void) {
                                                       @"defaultWaypipeEnabled"]]];
   }
 
-  BOOL hasBundledApp =
-      [defaults objectForKey:[prefix stringByAppendingString:@"defaultUseBundledApp"]] != nil;
-  BOOL useBundled = hasBundledApp &&
-                    [defaults boolForKey:[prefix stringByAppendingString:@"defaultUseBundledApp"]];
-  [self setEnableLauncher:useBundled];
-  NSString *bundledId =
-      [defaults stringForKey:[prefix stringByAppendingString:@"defaultBundledAppID"]];
-  [self setWestonEnabled:useBundled && [bundledId isEqualToString:@"weston"]];
-  [self setWestonTerminalEnabled:useBundled &&
-                               [bundledId isEqualToString:@"weston-terminal"]];
-  [self setWestonSimpleSHMEnabled:useBundled &&
-                               [bundledId isEqualToString:@"weston-simple-shm"]];
-  [self setFootEnabled:useBundled && [bundledId isEqualToString:@"foot"]];
+  // Do not rewrite live launcher flags from canonical defaults here.
+  // This sync runs during GUI machine connect; forcing a single bundled app
+  // would flip other client toggles to false and terminate already-running
+  // native clients via KVO observers.
 }
 
 - (void)observeValueForKeyPath:(NSString *)keyPath
@@ -362,8 +353,6 @@ static NSString *WWNPreferredSharedRuntimeDir(void) {
     kWWNPrefsTouchInputType : @"Multi-Touch",
     kWWNPrefsSwapCmdWithAlt : @YES,
     kWWNPrefsUniversalClipboard : @YES,
-    kWWNPrefsEnableTextAssist : @NO,
-    kWWNPrefsEnableDictation : @NO,
     // Graphics
     kWWNPrefsEnableVulkanDrivers : @YES,
     kWWNPrefsEnableDmabuf : @YES,
@@ -382,6 +371,7 @@ static NSString *WWNPreferredSharedRuntimeDir(void) {
     kWWNPrefsMultipleClients : @YES,
 #endif
     kWWNPrefsEnableLauncher : @NO,
+    kWWNPrefsMachineSessionThumbnailsEnabled : @YES,
     kWWNPrefsWestonSimpleSHMEnabled : @NO,
     kWWNPrefsWestonEnabled : @NO,
     kWWNPrefsWestonTerminalEnabled : @NO,
@@ -487,8 +477,6 @@ static NSString *WWNPreferredSharedRuntimeDir(void) {
   [defaults removeObjectForKey:kWWNPrefsSwapCmdWithAlt];
   [defaults removeObjectForKey:kWWNPrefsSwapCmdAsCtrl];
   [defaults removeObjectForKey:kWWNPrefsUniversalClipboard];
-  [defaults removeObjectForKey:kWWNPrefsEnableTextAssist];
-  [defaults removeObjectForKey:kWWNPrefsEnableDictation];
   // Graphics
   [defaults removeObjectForKey:kWWNPrefsEnableVulkanDrivers];
   [defaults removeObjectForKey:kWWNPrefsEnableDmabuf];
@@ -505,6 +493,7 @@ static NSString *WWNPreferredSharedRuntimeDir(void) {
   [defaults removeObjectForKey:kWWNPrefsUseMetal4ForNested];
   [defaults removeObjectForKey:kWWNPrefsMultipleClients];
   [defaults removeObjectForKey:kWWNPrefsEnableLauncher];
+  [defaults removeObjectForKey:kWWNPrefsMachineSessionThumbnailsEnabled];
   [defaults removeObjectForKey:kWWNPrefsWestonSimpleSHMEnabled];
   [defaults removeObjectForKey:kWWNPrefsWestonEnabled];
   [defaults removeObjectForKey:kWWNPrefsWestonTerminalEnabled];
@@ -667,6 +656,17 @@ static NSString *WWNPreferredSharedRuntimeDir(void) {
 - (void)setEnableLauncher:(BOOL)enabled {
   [[NSUserDefaults standardUserDefaults] setBool:enabled
                                           forKey:kWWNPrefsEnableLauncher];
+}
+
+- (BOOL)machineSessionThumbnailsEnabled {
+  return [[NSUserDefaults standardUserDefaults]
+      boolForKey:kWWNPrefsMachineSessionThumbnailsEnabled];
+}
+
+- (void)setMachineSessionThumbnailsEnabled:(BOOL)enabled {
+  [[NSUserDefaults standardUserDefaults]
+      setBool:enabled
+       forKey:kWWNPrefsMachineSessionThumbnailsEnabled];
 }
 
 - (BOOL)waypipeRSSupportEnabled {
@@ -934,26 +934,6 @@ static NSString *WWNPreferredSharedRuntimeDir(void) {
     [[NSUserDefaults standardUserDefaults]
         removeObjectForKey:kWWNPrefsTouchInputType];
   }
-}
-
-- (BOOL)enableTextAssist {
-  return [[NSUserDefaults standardUserDefaults]
-      boolForKey:kWWNPrefsEnableTextAssist];
-}
-
-- (void)setEnableTextAssist:(BOOL)enabled {
-  [[NSUserDefaults standardUserDefaults] setBool:enabled
-                                          forKey:kWWNPrefsEnableTextAssist];
-}
-
-- (BOOL)enableDictation {
-  return [[NSUserDefaults standardUserDefaults]
-      boolForKey:kWWNPrefsEnableDictation];
-}
-
-- (void)setEnableDictation:(BOOL)enabled {
-  [[NSUserDefaults standardUserDefaults] setBool:enabled
-                                          forKey:kWWNPrefsEnableDictation];
 }
 
 // Waypipe Configuration Methods

@@ -3,6 +3,7 @@ import SwiftUI
 struct WWNMachineCardView: View {
   let profile: WWNMachineProfile
   let status: WWNMachineTransientStatus
+  let thumbnailImage: WWNPlatformImage?
   let typeLabel: String
   let scopeLabel: String
   let subtitle: String
@@ -14,6 +15,7 @@ struct WWNMachineCardView: View {
   let onDelete: () -> Void
   let onConnect: () -> Void
   let onStop: () -> Void
+  let onFocus: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -64,12 +66,38 @@ struct WWNMachineCardView: View {
 
   private var headerBanner: some View {
     ZStack {
+      if let thumbnailImage {
+        #if os(macOS)
+        Image(nsImage: thumbnailImage)
+          .resizable()
+          .scaledToFill()
+          .frame(height: 90)
+          .clipped()
+        #else
+        Image(uiImage: thumbnailImage)
+          .resizable()
+          .scaledToFill()
+          .frame(height: 90)
+          .clipped()
+        #endif
+      } else {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+          .fill(
+            LinearGradient(
+              colors: [statusColor.opacity(0.32), Color.indigo.opacity(0.18)],
+              startPoint: .topLeading,
+              endPoint: .bottomTrailing
+            )
+          )
+          .frame(height: 90)
+      }
+
       RoundedRectangle(cornerRadius: 16, style: .continuous)
         .fill(
           LinearGradient(
-            colors: [statusColor.opacity(0.32), Color.indigo.opacity(0.18)],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
+            colors: [Color.black.opacity(0.10), Color.black.opacity(0.40)],
+            startPoint: .top,
+            endPoint: .bottom
           )
         )
         .frame(height: 90)
@@ -100,6 +128,13 @@ struct WWNMachineCardView: View {
   private var actionButtons: some View {
     Group {
       if isRunning {
+        Button {
+          onFocus()
+        } label: {
+          Label("Focus", systemImage: "scope")
+        }
+        .buttonStyle(.bordered)
+
         Button(role: .destructive) {
           onStop()
         } label: {

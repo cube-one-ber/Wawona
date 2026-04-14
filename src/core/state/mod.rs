@@ -265,6 +265,8 @@ pub struct XdgSurfaceData {
     pub window_id: Option<u32>,
     /// Serial number for configuration
     pub pending_serial: u32,
+    /// Most recently acknowledged configure serial.
+    pub last_acked_serial: u32,
     /// Whether initial configure was acked
     pub configured: bool,
     /// The actual protocol resource
@@ -279,6 +281,7 @@ impl XdgSurfaceData {
             surface_id,
             window_id: None,
             pending_serial: 0,
+            last_acked_serial: 0,
             configured: false,
             resource: None,
             geometry: None,
@@ -318,6 +321,8 @@ pub struct XdgToplevelData {
     pub saved_geometry: Option<(i32, i32, u32, u32)>,
     /// Pending configure serial
     pub pending_serial: u32,
+    /// Most recently acknowledged configure serial.
+    pub last_acked_serial: u32,
     /// Activation state
     pub activated: bool,
     /// If the window is currently maximized
@@ -349,6 +354,7 @@ impl XdgToplevelData {
             max_height: 0,
             saved_geometry: None,
             pending_serial: 0,
+            last_acked_serial: 0,
             activated: false,
             maximized: false,
             fullscreen: false,
@@ -1305,6 +1311,9 @@ pub struct CompositorState {
     
     /// Serial counter for Wayland events
     serial: u32,
+
+    /// Number of commits observed while an xdg_surface configure is still pending.
+    pub commit_before_ack_count: u64,
     
     // =========================================================================
     // Protocol Domain State (grouped by domain)
@@ -1391,6 +1400,7 @@ impl CompositorState {
             next_surface_id: 1,
             next_window_id: 1,
             serial: 0,
+            commit_before_ack_count: 0,
             
             // Protocol domain sub-states
             xdg: XdgState::default(),
@@ -1659,6 +1669,14 @@ mod tests {
             state.decoration_mode_for_new_window(),
             DecorationMode::ServerSide
         );
+    }
+
+    #[test]
+    fn test_xdg_surface_data_tracks_ack_serial_defaults() {
+        let data = XdgSurfaceData::new(123);
+        assert_eq!(data.pending_serial, 0);
+        assert_eq!(data.last_acked_serial, 0);
+        assert!(!data.configured);
     }
 }
 

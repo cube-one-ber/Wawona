@@ -44,14 +44,6 @@ bool WWNSettings_GetSwapCmdAsCtrl(void) {
   return [[WWNPreferencesManager sharedManager] swapCmdWithAlt];
 }
 
-bool WWNSettings_GetEnableTextAssist(void) {
-  return [[WWNPreferencesManager sharedManager] enableTextAssist];
-}
-
-bool WWNSettings_GetEnableDictation(void) {
-  return [[WWNPreferencesManager sharedManager] enableDictation];
-}
-
 bool WWNSettings_GetMultipleClientsEnabled(void) {
   return [[WWNPreferencesManager sharedManager] multipleClientsEnabled];
 }

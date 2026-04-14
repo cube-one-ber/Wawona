@@ -72,13 +72,12 @@ extern NSString *const kWWNPrefsSSHPassword;
 extern NSString *const kWWNPrefsSSHKeyPath;
 extern NSString *const kWWNPrefsSSHKeyPassphrase;
 extern NSString *const kWWNPrefsWaypipeUseSSHConfig;
-extern NSString *const kWWNPrefsEnableTextAssist;
-extern NSString *const kWWNPrefsEnableDictation;
 extern NSString *const kWWNForceSSDChangedNotification;
 extern NSString *const kWWNPrefsWestonSimpleSHMEnabled;
 extern NSString *const kWWNPrefsWestonEnabled;
 extern NSString *const kWWNPrefsWestonTerminalEnabled;
 extern NSString *const kWWNPrefsFootEnabled;
+extern NSString *const kWWNPrefsMachineSessionThumbnailsEnabled;
 @interface WWNPreferencesManager : NSObject
 
 + (instancetype)sharedManager;
@@ -122,10 +121,6 @@ extern NSString *const kWWNPrefsFootEnabled;
 - (void)setSwapCmdWithAlt:(BOOL)enabled;
 - (NSString *)touchInputType;
 - (void)setTouchInputType:(NSString *)type;
-- (BOOL)enableTextAssist;
-- (void)setEnableTextAssist:(BOOL)enabled;
-- (BOOL)enableDictation;
-- (void)setEnableDictation:(BOOL)enabled;
 
 // Client Management
 - (BOOL)multipleClientsEnabled;
@@ -133,6 +128,8 @@ extern NSString *const kWWNPrefsFootEnabled;
 
 - (BOOL)enableLauncher;
 - (void)setEnableLauncher:(BOOL)enabled;
+- (BOOL)machineSessionThumbnailsEnabled;
+- (void)setMachineSessionThumbnailsEnabled:(BOOL)enabled;
 
 // Waypipe
 - (BOOL)waypipeRSSupportEnabled;

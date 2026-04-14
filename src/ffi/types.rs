@@ -493,6 +493,52 @@ impl Default for ResizeEdge {
     }
 }
 
+/// What kind of size payload an event carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum GeometrySizeKind {
+    /// Host window frame (including native chrome).
+    Frame,
+    /// Drawable content area (excluding host chrome).
+    Content,
+    /// Client-submitted buffer dimensions.
+    Buffer,
+}
+
+impl Default for GeometrySizeKind {
+    fn default() -> Self {
+        Self::Content
+    }
+}
+
+/// Why a size/configure transition occurred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum WindowSizeCause {
+    Unknown,
+    /// Host requested resize and compositor emitted configure.
+    HostConfigure,
+    /// Client committed a new surface size.
+    ClientCommit,
+    /// Output mode/scale update triggered relayout.
+    OutputModeChange,
+}
+
+impl Default for WindowSizeCause {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+/// Correlates host resize requests to configure/ack/commit lifecycle.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ResizeTransaction {
+    pub id: u64,
+    pub window_id: WindowId,
+    pub configure_serial: u32,
+    pub cause: WindowSizeCause,
+    pub requested_size: Size,
+    pub size_kind: GeometrySizeKind,
+}
+
 /// Window configuration for creation
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct WindowConfig {
@@ -580,7 +626,15 @@ pub enum WindowEvent {
     AppIdChanged { window_id: WindowId, app_id: String },
     StateChanged { window_id: WindowId, state: WindowState },
     DecorationModeChanged { window_id: WindowId, mode: DecorationMode },
-    SizeChanged { window_id: WindowId, width: u32, height: u32 },
+    SizeChanged {
+        window_id: WindowId,
+        width: u32,
+        height: u32,
+        cause: WindowSizeCause,
+        size_kind: GeometrySizeKind,
+        configure_serial: u32,
+        transaction_id: u64,
+    },
     
     // Focus changes
     Activated { window_id: WindowId },
@@ -815,6 +869,7 @@ pub struct CursorRenderInfo {
     pub y: f32,
     pub hotspot_x: f32,
     pub hotspot_y: f32,
+    pub surface_id: u32,
     pub buffer_id: u64,
     pub width: u32,
     pub height: u32,

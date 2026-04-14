@@ -44,8 +44,6 @@
 | **Touchpad Mode** | `touchpadMode` | Switch | Off | Android | Same as Touchpad on iOS |
 | **Swap CMD with ALT** | `SwapCmdWithAlt` | Switch | On (macOS/iOS) | macOS, iOS | Swap Command and Alt keys |
 | **Universal Clipboard** | `universalClipboard` / `UniversalClipboard` | Switch | On | All | Sync clipboard with host platform |
-| **Enable Text Assist** | `enableTextAssist` / `EnableTextAssist` | Switch | Off | All | Autocorrect, suggestions, smart punctuation, swipe-to-type |
-| **Enable Dictation** | `enableDictation` / `EnableDictation` | Switch | Off | All | Voice dictation; spoken text sent to focused Wayland client |
 
 ---
 

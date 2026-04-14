@@ -17,6 +17,8 @@ static NSString *const kWWNRuntimeInputProfile = @"inputProfile";
 static NSString *const kWWNRuntimeUseBundledApp = @"useBundledApp";
 static NSString *const kWWNRuntimeBundledAppID = @"bundledAppID";
 static NSString *const kWWNRuntimeWaypipeEnabled = @"waypipeEnabled";
+static NSString *const kWWNRuntimeMachineThumbnailEnabledOverride =
+    @"machineThumbnailEnabledOverride";
 
 @implementation WWNMachineProfile
 
@@ -157,11 +159,39 @@ static NSString *const kWWNRuntimeWaypipeEnabled = @"waypipeEnabled";
     kWWNPrefsSSHKeyPath,
     kWWNPrefsSSHKeyPassphrase,
     kWWNPrefsWaypipeUseSSHConfig,
-    kWWNPrefsEnableTextAssist,
-    kWWNPrefsEnableDictation,
     kWWNPrefsWestonSimpleSHMEnabled,
     kWWNPrefsWestonEnabled,
     kWWNPrefsWestonTerminalEnabled,
+  ];
+}
+
++ (NSArray<NSString *> *)machineTransportOverrideKeys {
+  return @[
+    kWWNPrefsWaylandDisplayNumber,
+    kWWNPrefsWaypipeCompress,
+    kWWNPrefsWaypipeCompressLevel,
+    kWWNPrefsWaypipeThreads,
+    kWWNPrefsWaypipeVideo,
+    kWWNPrefsWaypipeVideoEncoding,
+    kWWNPrefsWaypipeVideoDecoding,
+    kWWNPrefsWaypipeVideoBpf,
+    kWWNPrefsWaypipeUseSSHConfig,
+    kWWNPrefsWaypipeRemoteCommand,
+    kWWNPrefsWaypipeDebug,
+    kWWNPrefsWaypipeNoGpu,
+    kWWNPrefsWaypipeOneshot,
+    kWWNPrefsWaypipeUnlinkSocket,
+    kWWNPrefsWaypipeLoginShell,
+    kWWNPrefsWaypipeVsock,
+    kWWNPrefsWaypipeXwls,
+    kWWNPrefsWaypipeTitlePrefix,
+    kWWNPrefsWaypipeSecCtx,
+    kWWNPrefsSSHHost,
+    kWWNPrefsSSHUser,
+    kWWNPrefsSSHAuthMethod,
+    kWWNPrefsSSHPassword,
+    kWWNPrefsSSHKeyPath,
+    kWWNPrefsSSHKeyPassphrase,
   ];
 }
 
@@ -429,6 +459,18 @@ static NSString *const kWWNRuntimeWaypipeEnabled = @"waypipeEnabled";
   }
 }
 
++ (WWNMachineProfile *)profileById:(NSString *)machineId {
+  if (machineId.length == 0) {
+    return nil;
+  }
+  for (WWNMachineProfile *profile in [self loadProfiles]) {
+    if ([profile.machineId isEqualToString:machineId]) {
+      return profile;
+    }
+  }
+  return nil;
+}
+
 + (void)applyMachineToRuntimePrefs:(WWNMachineProfile *)profile {
   [self ensureObserverRegistered];
   NSDictionary<NSString *, id> *resolved = [self resolvedRuntimeSettingsForProfile:profile];
@@ -438,7 +480,33 @@ static NSString *const kWWNRuntimeWaypipeEnabled = @"waypipeEnabled";
   [prefs setWaypipeSSHUser:[resolved[@"sshUser"] isKindOfClass:[NSString class]] ? resolved[@"sshUser"] : @""];
   [prefs setWaypipeSSHPassword:[resolved[@"sshPassword"] isKindOfClass:[NSString class]] ? resolved[@"sshPassword"] : @""];
   [prefs setWaypipeRemoteCommand:[resolved[@"remoteCommand"] isKindOfClass:[NSString class]] ? resolved[@"remoteCommand"] : @""];
+  [prefs setWaypipeSSHAuthMethod:profile.sshAuthMethod];
+  [prefs setWaypipeSSHKeyPath:profile.sshKeyPath ?: @""];
+  [prefs setWaypipeSSHKeyPassphrase:profile.sshKeyPassphrase ?: @""];
+  [prefs setWaypipeCompress:profile.waypipeCompress ?: @"lz4"];
+  [prefs setWaypipeThreads:profile.waypipeThreads ?: @"0"];
+  [prefs setWaypipeVideo:profile.waypipeVideo ?: @"none"];
+  [prefs setWaypipeDebug:profile.waypipeDebug];
+  [prefs setWaypipeNoGpu:profile.waypipeDisableGpu];
+  [prefs setWaypipeOneshot:profile.waypipeOneshot];
+  [prefs setWaypipeLoginShell:profile.waypipeLoginShell];
+  [prefs setWaypipeTitlePrefix:profile.waypipeTitlePrefix ?: @""];
+  [prefs setWaypipeSecCtx:profile.waypipeSecCtx ?: @""];
   [prefs setTouchInputType:[resolved[@"inputProfile"] isKindOfClass:[NSString class]] ? resolved[@"inputProfile"] : @"Multi-Touch"];
+
+  NSDictionary<NSString *, id> *overrides =
+      [profile.settingsOverrides isKindOfClass:[NSDictionary class]]
+          ? profile.settingsOverrides
+          : @{};
+  NSMutableDictionary<NSString *, id> *transportSnapshot =
+      [NSMutableDictionary dictionary];
+  for (NSString *key in [self machineTransportOverrideKeys]) {
+    id value = overrides[key];
+    if (value != nil) {
+      transportSnapshot[key] = value;
+    }
+  }
+  [self applySettingsSnapshot:transportSnapshot];
 
   NSString *bundledClientID =
       [resolved[kWWNRuntimeBundledAppID] isKindOfClass:[NSString class]]
@@ -446,10 +514,19 @@ static NSString *const kWWNRuntimeWaypipeEnabled = @"waypipeEnabled";
           : @"";
   BOOL useBundledApp = [resolved[kWWNRuntimeUseBundledApp] boolValue];
   [prefs setEnableLauncher:useBundledApp];
-  [prefs setWestonEnabled:useBundledApp && [bundledClientID isEqualToString:@"weston"]];
-  [prefs setWestonTerminalEnabled:useBundledApp && [bundledClientID isEqualToString:@"weston-terminal"]];
-  [prefs setWestonSimpleSHMEnabled:useBundledApp && [bundledClientID isEqualToString:@"weston-simple-shm"]];
-  [prefs setFootEnabled:useBundledApp && [bundledClientID isEqualToString:@"foot"]];
+  // Keep native clients additive: enabling one profile should not auto-disable
+  // already-running clients from other profiles.
+  if (useBundledApp) {
+    if ([bundledClientID isEqualToString:@"weston"]) {
+      [prefs setWestonEnabled:YES];
+    } else if ([bundledClientID isEqualToString:@"weston-terminal"]) {
+      [prefs setWestonTerminalEnabled:YES];
+    } else if ([bundledClientID isEqualToString:@"weston-simple-shm"]) {
+      [prefs setWestonSimpleSHMEnabled:YES];
+    } else if ([bundledClientID isEqualToString:@"foot"]) {
+      [prefs setFootEnabled:YES];
+    }
+  }
 }
 
 + (void)persistActiveMachineSettings {
@@ -522,6 +599,18 @@ static NSString *const kWWNRuntimeWaypipeEnabled = @"waypipeEnabled";
     kWWNRuntimeBundledAppID : bundledAppID ?: @"",
     @"inputProfile" : inputProfile ?: @"Multi-Touch",
   };
+}
+
++ (BOOL)isMachineThumbnailEnabledForProfile:(WWNMachineProfile *)profile {
+  NSDictionary<NSString *, id> *runtimeOverrides =
+      [profile.runtimeOverrides isKindOfClass:[NSDictionary class]]
+          ? profile.runtimeOverrides
+          : @{};
+  id overrideValue = runtimeOverrides[kWWNRuntimeMachineThumbnailEnabledOverride];
+  if ([overrideValue respondsToSelector:@selector(boolValue)]) {
+    return [overrideValue boolValue];
+  }
+  return [[WWNPreferencesManager sharedManager] machineSessionThumbnailsEnabled];
 }
 
 @end

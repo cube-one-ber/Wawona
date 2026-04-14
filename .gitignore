@@ -144,3 +144,6 @@ android/app/libs/
 swiftly.pkg
 skip.dev/
 inspirational_projects/
+
+# Local Skip Fuse template clone (reference only; do not commit)
+skipapp-bookings-fuse/

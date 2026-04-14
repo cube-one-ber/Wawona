@@ -290,6 +290,7 @@
           
           # Weston and Waypipe (Native on Linux, Cross-wrapped on Darwin)
           weston = if pkgs.stdenv.isDarwin then toolchains.buildForMacOS "weston" {} else pkgs.weston;
+          foot = if pkgs.stdenv.isDarwin then toolchains.buildForMacOS "foot" {} else pkgs.foot;
           waypipe = if pkgs.stdenv.isDarwin then toolchains.buildForMacOS "waypipe" { } else pkgs.waypipe;
           
           # Wawona (Native on Linux, Cross-wrapped on Darwin)
@@ -348,6 +349,7 @@
             inherit wawonaVersion;
           };
         }) // (pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin (let
+          shellWrappers = import ./dependencies/wawona/shell-wrappers.nix;
           teamId = let value = builtins.getEnv "TEAM_ID"; in if value == "" then null else value;
           apple = import ./dependencies/apple {
             inherit (pkgs) lib pkgs;
@@ -367,6 +369,22 @@
           weston-terminal-pkg = pkgs.runCommand "weston-terminal" { } ''
             mkdir -p "$out/bin"
             ln -s "${commonPackages.weston}/bin/weston-terminal" "$out/bin/weston-terminal"
+          '';
+          weston-simple-shm-runner = pkgs.writeShellScriptBin "weston-simple-shm" ''
+            if [ -z "''${XDG_RUNTIME_DIR:-}" ]; then
+              export XDG_RUNTIME_DIR="/tmp/wawona-$(id -u)"
+              mkdir -p "$XDG_RUNTIME_DIR"
+              chmod 700 "$XDG_RUNTIME_DIR"
+            fi
+            export WAYLAND_DISPLAY="''${WAYLAND_DISPLAY:-wayland-0}"
+
+            if [ -x "${commonPackages.weston}/bin/weston-simple-shm" ]; then
+              exec "${commonPackages.weston}/bin/weston-simple-shm" "$@"
+            fi
+
+            echo "weston-simple-shm is not available in this macOS Weston build (${commonPackages.weston})." >&2
+            echo "Run 'nix run .#weston-terminal' or rebuild Weston with demo clients enabled." >&2
+            exit 1
           '';
           workspace-src-macos = pkgs.callPackage ./dependencies/wawona/workspace-src.nix {
             wawonaSrc = src; waypipeSrc = waypipe-patched-macos; platform = "macos"; inherit wawonaVersion;
@@ -687,7 +705,9 @@
           xcodegen = xcodegenOutputs.app;
           xcodegenProject = xcodegenOutputs.project;
           weston-debug = toolchains.buildForMacOS "weston" { debug = true; };
-          weston-simple-shm = toolchains.buildForMacOS "weston-simple-shm" {};
+          weston-simple-shm-lib = toolchains.buildForMacOS "weston-simple-shm" {};
+          weston-simple-shm = weston-simple-shm-runner;
+          foot = commonPackages.foot;
           weston-terminal = weston-terminal-pkg;
           waypipe-ios = toolchains.buildForIOS "waypipe" { };
           waypipe-ios-sim = toolchains.buildForIOS "waypipe" { simulator = true; };
@@ -707,6 +727,7 @@
 
     getAppsForSystem = system: pkgs: systemPackages:
       let
+        shellWrappers = import ./dependencies/wawona/shell-wrappers.nix;
         appPrograms = import ./dependencies/wawona/app-programs.nix {
           inherit pkgs systemPackages;
           xcodeUtils = import ./dependencies/apple { inherit (pkgs) lib pkgs; nixXcodeenvtests = inputs."nix-xcodeenvtests"; };
@@ -722,6 +743,22 @@
         wawona-wearos = { type = "app"; program = "${systemPackages.wawona-wearos}/bin/wawona-wearos-run"; };
         wearos = { type = "app"; program = "${systemPackages.wawona-wearos}/bin/wawona-wearos-run"; };
       }) // (pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+        weston = {
+          type = "app";
+          program = "${(shellWrappers.westonAppWrapper pkgs systemPackages.weston "weston")}/bin/weston";
+        };
+        weston-terminal = {
+          type = "app";
+          program = "${(shellWrappers.westonAppWrapper pkgs systemPackages.weston "weston-terminal")}/bin/weston-terminal";
+        };
+        weston-simple-shm = {
+          type = "app";
+          program = "${systemPackages.weston-simple-shm}/bin/weston-simple-shm";
+        };
+        foot = {
+          type = "app";
+          program = "${(shellWrappers.footWrapper pkgs systemPackages.foot)}/bin/foot";
+        };
         wawona-macos = { type = "app"; program = "${systemPackages.wawona-macos}/bin/wawona"; };
         wawona-macos-project = { type = "app"; program = "${systemPackages.wawona-macos-project}/bin/xcodegen"; };
         wawona-ios = { type = "app"; program = appPrograms.wawonaIos; };
@@ -817,10 +854,19 @@
           src = ./.;
           nativeBuildInputs = [ pkgs.coreutils pkgs.gnugrep ];
         } ''
-          grep -q "WARN: skip export failed in Nix build; using checked-in android/Skip artifacts" "$src/dependencies/wawona/android.nix"
-          grep -q "WARN: swift tool not found in Nix build; using checked-in android/Skip artifacts" "$src/dependencies/wawona/android.nix"
+          grep -q "no fallback to checked-in android/Skip" "$src/dependencies/wawona/android.nix"
+          grep -q "rm -rf android/Skip" "$src/dependencies/wawona/android.nix"
           grep -q "SKIP_ARTIFACTS_DIR" "$src/dependencies/wawona/android.nix"
           grep -q "android/Skip" "$src/dependencies/wawona/android.nix"
+          touch "$out"
+        '';
+        skip-export-gate-smoke = pkgs.runCommand "skip-export-gate-smoke" {
+          src = ./.;
+          nativeBuildInputs = [ pkgs.coreutils pkgs.gnugrep ];
+        } ''
+          grep -q 'pkgs.swift' "$src/dependencies/wawona/android.nix"
+          grep -q "skip export --project" "$src/dependencies/wawona/android.nix"
+          grep -q "scripts/skip-export-local.sh" "$src/dependencies/wawona/android.nix"
           touch "$out"
         '';
         ui-parity-gates-smoke = pkgs.runCommand "ui-parity-gates-smoke" {

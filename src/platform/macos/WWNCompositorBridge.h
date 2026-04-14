@@ -111,6 +111,14 @@ typedef struct {
                      width:(uint32_t)width
                     height:(uint32_t)height;
 
+/// Ask the Wayland client to close (`xdg_toplevel.close`). Returns YES if a
+/// toplevel was found (caller should cancel the NSWindow close until teardown).
+- (BOOL)requestHostCloseForWindowId:(uint64_t)windowId;
+
+/// Drop compositor window state without client cooperation. Drains pending
+/// `WindowDestroyed` on the main queue when invoked from the compositor queue.
+- (BOOL)requestForceDestroyHostWindowForWindowId:(uint64_t)windowId;
+
 - (void)setWindowActivated:(uint64_t)windowId active:(BOOL)active;
 
 /// Inject keyboard modifiers
@@ -207,6 +215,17 @@ typedef struct {
 /// YES when any connected client has requested cursor management through
 /// either wp_cursor_shape (named shapes) or wl_pointer.set_cursor (bitmaps).
 @property(nonatomic, readonly) BOOL clientWantsCursorRendered;
+
+/// Captures the currently visible compositor content as PNG data for machine thumbnails.
+- (nullable NSData *)captureCurrentSessionThumbnailPNGData;
+
+/// Brings compositor client windows to front and focuses one.
+/// Returns YES if at least one client window was focused.
+- (BOOL)focusClientWindows;
+
+/// Brings compositor windows for a specific machine profile to front.
+/// Falls back to all client windows when no ownership mapping is found.
+- (BOOL)focusClientWindowsForMachineId:(NSString *)machineId;
 #endif
 
 @end

@@ -331,7 +331,7 @@ let
               WAYPIPE_SRC="${strip (macosDeps.waypipe or null)}/bin/waypipe"
               SSHPASS_SRC="${strip (macosDeps.sshpass or null)}/bin/sshpass"
               WESTON_SRC="${strip macosWeston}/bin"
-              FOOT_SRC="${strip macosFoot}/bin/foot"
+              FOOT_BIN="${strip macosFoot}/bin"
 
               BIN_DEST="$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/Resources/bin"
               MACOS_DEST="$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/MacOS"
@@ -363,10 +363,14 @@ let
                 done
               fi
 
-              # Bundle Foot terminal
-              if [ -f "$FOOT_SRC" ]; then
-                install -m 755 "$FOOT_SRC" "$BIN_DEST/foot"
-                install -m 755 "$FOOT_SRC" "$MACOS_DEST/foot"
+              # Bundle Foot terminal (wrapper script + real binary; see clients/foot/macos.nix postInstall)
+              if [ -f "$FOOT_BIN/foot" ]; then
+                install -m 755 "$FOOT_BIN/foot" "$BIN_DEST/foot"
+                install -m 755 "$FOOT_BIN/foot" "$MACOS_DEST/foot"
+                if [ -f "$FOOT_BIN/.foot-wrapped" ]; then
+                  install -m 755 "$FOOT_BIN/.foot-wrapped" "$BIN_DEST/.foot-wrapped"
+                  install -m 755 "$FOOT_BIN/.foot-wrapped" "$MACOS_DEST/.foot-wrapped"
+                fi
                 echo "Bundled foot"
               fi
             '';

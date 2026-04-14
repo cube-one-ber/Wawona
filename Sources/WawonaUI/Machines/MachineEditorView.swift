@@ -5,23 +5,46 @@ import WawonaUIContracts
 struct MachineEditorView: View {
     @Environment(\.dismiss) var dismiss
 
-    @State var name = ""
-    @State var type: MachineType = .native
-    @State var selectedLauncherName = ClientLauncher.presets.first?.name ?? "weston-simple-shm"
+    // Skip: @State must be internal for Android bridge (see MachineSettingsView).
+    @State var name: String
+    @State var type: MachineType
+    @State var selectedLauncherName: String
+    @State var sshHost: String
+    @State var sshUser: String
+    @State var sshPort: Int
+    @State var sshPassword: String
+    @State var remoteCommand: String
 
-    // SSH-only fields — not shown for native type
-    @State var sshHost = ""
-    @State var sshUser = ""
-    @State var sshPort = 22
-    @State var sshPassword = ""
-    @State var remoteCommand = ""
-
+    let existingProfileId: String?
+    /// Snapshot for fields this form does not edit (VM/container metadata, favorites, renderer, etc.).
+    let editingBaseline: MachineProfile?
     let onSave: (MachineProfile) -> Void
+
+    init(profile: MachineProfile? = nil, onSave: @escaping (MachineProfile) -> Void) {
+        self.existingProfileId = profile?.id
+        self.editingBaseline = profile
+        self.onSave = onSave
+        let state = WawonaUIContractAdapters.machineEditorState(from: profile)
+        _name = State(initialValue: state.name)
+        _type = State(initialValue: MachineType(rawValue: state.typeRawValue) ?? .native)
+        _selectedLauncherName = State(initialValue: state.selectedLauncherName)
+        _sshHost = State(initialValue: state.sshHost)
+        _sshUser = State(initialValue: state.sshUser)
+        _sshPort = State(initialValue: MachineEditorValidation.normalizedPort(from: state))
+        _sshPassword = State(initialValue: state.sshPassword)
+        _remoteCommand = State(initialValue: state.remoteCommand)
+    }
 
     private var isNative: Bool { type == .native }
     private var isSSH:    Bool { type == .sshWaypipe || type == .sshTerminal }
     private var contractState: MachineEditorState {
-        MachineEditorState(
+        persistableEditorState()
+    }
+
+    private func persistableEditorState() -> MachineEditorState {
+        let base = WawonaUIContractAdapters.machineEditorState(from: editingBaseline)
+        return MachineEditorState(
+            id: existingProfileId ?? base.id,
             name: name,
             typeRawValue: type.rawValue,
             selectedLauncherName: selectedLauncherName,
@@ -29,8 +52,21 @@ struct MachineEditorView: View {
             sshUser: sshUser,
             sshPortText: String(sshPort),
             sshPassword: sshPassword,
-            remoteCommand: remoteCommand
+            remoteCommand: remoteCommand,
+            vmSubtype: base.vmSubtype,
+            containerSubtype: base.containerSubtype,
+            inputProfile: base.inputProfile,
+            bundledAppID: base.bundledAppID,
+            useBundledApp: base.useBundledApp,
+            waypipeEnabled: base.waypipeEnabled
         )
+    }
+
+    private var editorNavigationTitle: String {
+        if existingProfileId != nil {
+            return name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Edit Machine" : name
+        }
+        return name.isEmpty ? "New Machine" : name
     }
     private var hasValidationIssues: Bool {
         !MachineEditorValidation.validate(contractState).isEmpty
@@ -50,7 +86,7 @@ struct MachineEditorView: View {
                     TextField("Name", text: $name)
                     Picker("Type", selection: $type) {
                         ForEach(MachineType.allCases, id: \.self) { t in
-                            Text(t.rawValue).tag(t)
+                            Text(t.userFacingName).tag(t)
                         }
                     }
                     .pickerStyle(.menu)
@@ -119,7 +155,7 @@ struct MachineEditorView: View {
                     }
                 }
             }
-            .navigationTitle(name.isEmpty ? "New Machine" : name)
+            .navigationTitle(editorNavigationTitle)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -133,22 +169,17 @@ struct MachineEditorView: View {
     }
 
     private func save() {
-        let state = MachineEditorState(
-            name: name,
-            typeRawValue: type.rawValue,
-            selectedLauncherName: selectedLauncherName,
-            sshHost: sshHost,
-            sshUser: sshUser,
-            sshPortText: String(sshPort),
-            sshPassword: sshPassword,
-            remoteCommand: remoteCommand
-        )
+        let state = persistableEditorState()
         if !MachineEditorValidation.validate(state).isEmpty {
             return
         }
         var profile = WawonaUIContractAdapters.profile(from: state)
         if profile.name.isEmpty {
             profile.name = "Unnamed"
+        }
+        if let baseline = editingBaseline {
+            profile.favorite = baseline.favorite
+            profile.runtimeOverrides.renderer = baseline.runtimeOverrides.renderer
         }
         onSave(profile)
         dismiss()

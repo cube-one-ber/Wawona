@@ -9,8 +9,8 @@ NS_ASSUME_NONNULL_BEGIN
  * It uses a CALayer for content rendering (bridged from Rust/IOSurface)
  * and translates UIKit touches to Wayland pointer events.
  *
- * Conforms to UITextInput for full IME/autocorrect/dictation support
- * (when Text Assist is enabled in settings) and UIKeyInput as fallback.
+ * Conforms to UITextInput for full IME/autocorrect/dictation support and
+ * UIKeyInput as fallback.
  */
 @interface WWNCompositorView_ios : UIView <UITextInput>
 

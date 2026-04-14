@@ -15,6 +15,8 @@ struct WWNMachineEditorView: View {
   @State private var sshUser: String
   @State private var sshPassword: String
   @State private var sshKeyPath: String
+  @State private var sshKeyPassphrase: String
+  @State private var sshAuthMethod: Int
   @State private var remoteCommand: String
   @State private var vmSubtype: String
   @State private var containerSubtype: String
@@ -23,6 +25,26 @@ struct WWNMachineEditorView: View {
   @State private var customCommand: String
   @State private var enableLauncher: Bool
   @State private var customIsNestedCompositor: Bool
+  @State private var overrideGlobalThumbnailSetting: Bool
+  @State private var machineThumbnailEnabled: Bool
+  @State private var waypipeDisplayNumber: String
+  @State private var waypipeCompress: String
+  @State private var waypipeCompressLevel: String
+  @State private var waypipeThreads: String
+  @State private var waypipeVideo: String
+  @State private var waypipeVideoEncoding: String
+  @State private var waypipeVideoDecoding: String
+  @State private var waypipeVideoBpf: String
+  @State private var waypipeUseSSHConfig: Bool
+  @State private var waypipeDebug: Bool
+  @State private var waypipeNoGpu: Bool
+  @State private var waypipeOneshot: Bool
+  @State private var waypipeUnlinkSocket: Bool
+  @State private var waypipeLoginShell: Bool
+  @State private var waypipeVsock: Bool
+  @State private var waypipeXwls: Bool
+  @State private var waypipeTitlePrefix: String
+  @State private var waypipeSecCtx: String
 
   init(
     title: String,
@@ -40,15 +62,45 @@ struct WWNMachineEditorView: View {
     _sshUser = State(initialValue: initial?.sshUser ?? "")
     _sshPassword = State(initialValue: initial?.sshPassword ?? "")
     _sshKeyPath = State(initialValue: initial?.sshKeyPath ?? "")
+    _sshKeyPassphrase = State(initialValue: initial?.sshKeyPassphrase ?? "")
+    _sshAuthMethod = State(initialValue: initial?.sshAuthMethod ?? 0)
     _remoteCommand = State(initialValue: initial?.remoteCommand ?? "")
     _vmSubtype = State(initialValue: initial?.vmSubtype ?? "qemu")
     _containerSubtype = State(initialValue: initial?.containerSubtype ?? "docker")
 
     let runtimeOverrides: [String: Any] = initial?.runtimeOverrides ?? [:]
     let overrides: [String: Any] = initial?.settingsOverrides ?? [:]
+    let prefs = WWNPreferencesManager.shared()
     _enableLauncher = State(initialValue: (runtimeOverrides["useBundledApp"] as? Bool) ?? ((overrides["EnableLauncher"] as? Bool) ?? false))
     _customCommand = State(initialValue: (overrides["NativeCustomCommand"] as? String) ?? "")
     _customIsNestedCompositor = State(initialValue: (overrides["RenderMacOSPointer"] as? Bool) == false)
+    if let thumbnailOverride = runtimeOverrides["machineThumbnailEnabledOverride"] as? Bool {
+      _overrideGlobalThumbnailSetting = State(initialValue: true)
+      _machineThumbnailEnabled = State(initialValue: thumbnailOverride)
+    } else {
+      _overrideGlobalThumbnailSetting = State(initialValue: false)
+      _machineThumbnailEnabled = State(
+        initialValue: WWNPreferencesManager.shared().machineSessionThumbnailsEnabled()
+      )
+    }
+    _waypipeDisplayNumber = State(initialValue: (overrides["WaylandDisplayNumber"] as? NSNumber)?.stringValue ?? "\(prefs.waylandDisplayNumber())")
+    _waypipeCompress = State(initialValue: overrides["WaypipeCompress"] as? String ?? prefs.waypipeCompress())
+    _waypipeCompressLevel = State(initialValue: (overrides["WaypipeCompressLevel"] as? NSNumber)?.stringValue ?? (overrides["WaypipeCompressLevel"] as? String ?? prefs.waypipeCompressLevel()))
+    _waypipeThreads = State(initialValue: (overrides["WaypipeThreads"] as? NSNumber)?.stringValue ?? (overrides["WaypipeThreads"] as? String ?? prefs.waypipeThreads()))
+    _waypipeVideo = State(initialValue: overrides["WaypipeVideo"] as? String ?? prefs.waypipeVideo())
+    _waypipeVideoEncoding = State(initialValue: overrides["WaypipeVideoEncoding"] as? String ?? prefs.waypipeVideoEncoding())
+    _waypipeVideoDecoding = State(initialValue: overrides["WaypipeVideoDecoding"] as? String ?? prefs.waypipeVideoDecoding())
+    _waypipeVideoBpf = State(initialValue: (overrides["WaypipeVideoBpf"] as? NSNumber)?.stringValue ?? (overrides["WaypipeVideoBpf"] as? String ?? prefs.waypipeVideoBpf()))
+    _waypipeUseSSHConfig = State(initialValue: (overrides["WaypipeUseSSHConfig"] as? Bool) ?? prefs.waypipeUseSSHConfig())
+    _waypipeDebug = State(initialValue: (overrides["WaypipeDebug"] as? Bool) ?? prefs.waypipeDebug())
+    _waypipeNoGpu = State(initialValue: (overrides["WaypipeNoGpu"] as? Bool) ?? prefs.waypipeNoGpu())
+    _waypipeOneshot = State(initialValue: (overrides["WaypipeOneshot"] as? Bool) ?? prefs.waypipeOneshot())
+    _waypipeUnlinkSocket = State(initialValue: (overrides["WaypipeUnlinkSocket"] as? Bool) ?? prefs.waypipeUnlinkSocket())
+    _waypipeLoginShell = State(initialValue: (overrides["WaypipeLoginShell"] as? Bool) ?? prefs.waypipeLoginShell())
+    _waypipeVsock = State(initialValue: (overrides["WaypipeVsock"] as? Bool) ?? prefs.waypipeVsock())
+    _waypipeXwls = State(initialValue: (overrides["WaypipeXwls"] as? Bool) ?? prefs.waypipeXwls())
+    _waypipeTitlePrefix = State(initialValue: overrides["WaypipeTitlePrefix"] as? String ?? prefs.waypipeTitlePrefix())
+    _waypipeSecCtx = State(initialValue: overrides["WaypipeSecCtx"] as? String ?? prefs.waypipeSecCtx())
 
     if let stored = runtimeOverrides["bundledAppID"] as? String, !stored.isEmpty {
       _selectedClientId = State(initialValue: stored)
@@ -83,6 +135,14 @@ struct WWNMachineEditorView: View {
               .pickerStyle(.menu)
               .labelsHidden()
             }
+            Divider()
+            Toggle("Override Global Thumbnail Setting", isOn: $overrideGlobalThumbnailSetting)
+              .toggleStyle(.switch)
+            if overrideGlobalThumbnailSetting {
+              Toggle("Show Session Thumbnail On Card", isOn: $machineThumbnailEnabled)
+                .toggleStyle(.switch)
+                .padding(.leading, 18)
+            }
           }
 
           if type == kWWNMachineTypeNative {
@@ -91,6 +151,7 @@ struct WWNMachineEditorView: View {
 
           if isRemote {
             remoteConnectivitySection
+            waypipeOverridesSection
           }
 
           if type == kWWNMachineTypeVirtualMachine {
@@ -236,6 +297,7 @@ struct WWNMachineEditorView: View {
         TextField("e.g. /usr/bin/my-wayland-app", text: $customCommand)
           .textFieldStyle(.roundedBorder)
           .wwnDisableAutocapitalization()
+          .autocorrectionDisabled()
           .padding(.leading, 68)
 
         Toggle(isOn: $customIsNestedCompositor) {
@@ -273,19 +335,124 @@ struct WWNMachineEditorView: View {
           .textFieldStyle(.roundedBorder)
           .wwnDisableAutocapitalization()
       }
-      labeledField("Password") {
-        SecureField("Optional", text: $sshPassword)
-          .textFieldStyle(.roundedBorder)
-      }
       labeledField("SSH Key Path") {
         TextField("~/.ssh/id_ed25519", text: $sshKeyPath)
           .textFieldStyle(.roundedBorder)
           .wwnDisableAutocapitalization()
+          .autocorrectionDisabled()
+      }
+      labeledField("Auth Method") {
+        Picker("", selection: $sshAuthMethod) {
+          Text("Password").tag(0)
+          Text("Public Key").tag(1)
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+      }
+      if sshAuthMethod == 0 {
+        labeledField("Password") {
+          SecureField("Optional", text: $sshPassword)
+            .textFieldStyle(.roundedBorder)
+        }
+      } else {
+        labeledField("Key Passphrase") {
+          SecureField("Optional", text: $sshKeyPassphrase)
+            .textFieldStyle(.roundedBorder)
+        }
       }
       labeledField(isWaypipe ? "Remote Command" : "SSH Command") {
         TextField(isWaypipe ? "weston-terminal" : "bash -l", text: $remoteCommand)
           .textFieldStyle(.roundedBorder)
+          .wwnDisableAutocapitalization()
+          .autocorrectionDisabled()
       }
+    }
+  }
+
+  private var waypipeOverridesSection: some View {
+    sectionCard("Waypipe Overrides", subtitle: "Per-machine Waypipe and transport settings. These override global defaults.") {
+      labeledField("Display Number") {
+        TextField("0", text: $waypipeDisplayNumber)
+          .textFieldStyle(.roundedBorder)
+          .wwnDisableAutocapitalization()
+          .autocorrectionDisabled()
+      }
+      labeledField("Compression") {
+        Picker("", selection: $waypipeCompress) {
+          Text("none").tag("none")
+          Text("lz4").tag("lz4")
+          Text("zstd").tag("zstd")
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+      }
+      labeledField("Compression Level") {
+        TextField("7", text: $waypipeCompressLevel)
+          .textFieldStyle(.roundedBorder)
+          .wwnDisableAutocapitalization()
+          .autocorrectionDisabled()
+      }
+      labeledField("Threads") {
+        TextField("0", text: $waypipeThreads)
+          .textFieldStyle(.roundedBorder)
+          .wwnDisableAutocapitalization()
+          .autocorrectionDisabled()
+      }
+      labeledField("Video Codec") {
+        Picker("", selection: $waypipeVideo) {
+          Text("none").tag("none")
+          Text("h264").tag("h264")
+          Text("vp9").tag("vp9")
+          Text("av1").tag("av1")
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+      }
+      labeledField("Video Encoding") {
+        Picker("", selection: $waypipeVideoEncoding) {
+          Text("hw").tag("hw")
+          Text("sw").tag("sw")
+          Text("hwenc").tag("hwenc")
+          Text("swenc").tag("swenc")
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+      }
+      labeledField("Video Decoding") {
+        Picker("", selection: $waypipeVideoDecoding) {
+          Text("hw").tag("hw")
+          Text("sw").tag("sw")
+          Text("hwdec").tag("hwdec")
+          Text("swdec").tag("swdec")
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+      }
+      labeledField("Bits Per Frame") {
+        TextField("Optional", text: $waypipeVideoBpf)
+          .textFieldStyle(.roundedBorder)
+          .wwnDisableAutocapitalization()
+          .autocorrectionDisabled()
+      }
+      labeledField("Title Prefix") {
+        TextField("Optional", text: $waypipeTitlePrefix)
+          .textFieldStyle(.roundedBorder)
+          .wwnDisableAutocapitalization()
+      }
+      labeledField("Sec Context") {
+        TextField("Optional", text: $waypipeSecCtx)
+          .textFieldStyle(.roundedBorder)
+          .wwnDisableAutocapitalization()
+          .autocorrectionDisabled()
+      }
+      Toggle("Use SSH Config", isOn: $waypipeUseSSHConfig)
+      Toggle("Debug Mode", isOn: $waypipeDebug)
+      Toggle("Disable GPU", isOn: $waypipeNoGpu)
+      Toggle("One-shot", isOn: $waypipeOneshot)
+      Toggle("Unlink Socket", isOn: $waypipeUnlinkSocket)
+      Toggle("Login Shell", isOn: $waypipeLoginShell)
+      Toggle("VSock", isOn: $waypipeVsock)
+      Toggle("XWayland", isOn: $waypipeXwls)
     }
   }
 
@@ -316,6 +483,8 @@ struct WWNMachineEditorView: View {
       labeledField("Startup Command") {
         TextField("weston-terminal", text: $remoteCommand)
           .textFieldStyle(.roundedBorder)
+          .wwnDisableAutocapitalization()
+          .autocorrectionDisabled()
       }
       Text("Container launch support is currently placeholder behavior until runtime integration is complete.")
         .font(.footnote)
@@ -381,7 +550,18 @@ struct WWNMachineEditorView: View {
     profile.sshUser = sshUser.trimmingCharacters(in: .whitespacesAndNewlines)
     profile.sshPassword = sshPassword
     profile.sshKeyPath = sshKeyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    profile.sshKeyPassphrase = sshKeyPassphrase
+    profile.sshAuthMethod = sshAuthMethod
     profile.remoteCommand = remoteCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+    profile.waypipeCompress = waypipeCompress
+    profile.waypipeThreads = waypipeThreads
+    profile.waypipeVideo = waypipeVideo
+    profile.waypipeDebug = waypipeDebug
+    profile.waypipeOneshot = waypipeOneshot
+    profile.waypipeDisableGpu = waypipeNoGpu
+    profile.waypipeLoginShell = waypipeLoginShell
+    profile.waypipeTitlePrefix = waypipeTitlePrefix
+    profile.waypipeSecCtx = waypipeSecCtx
     profile.vmSubtype = vmSubtype.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "qemu" : vmSubtype
     profile.containerSubtype =
       containerSubtype.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "docker" : containerSubtype
@@ -403,10 +583,40 @@ struct WWNMachineEditorView: View {
       isNested = kBundledClients.first(where: { $0.id == selectedClientId })?.isNestedCompositor ?? false
     }
     overrides["RenderMacOSPointer"] = !isNested
+    overrides["WaylandDisplayNumber"] = Int(waypipeDisplayNumber) ?? 0
+    overrides["WaypipeCompress"] = waypipeCompress
+    overrides["WaypipeCompressLevel"] = Int(waypipeCompressLevel) ?? 7
+    overrides["WaypipeThreads"] = Int(waypipeThreads) ?? 0
+    overrides["WaypipeVideo"] = waypipeVideo
+    overrides["WaypipeVideoEncoding"] = waypipeVideoEncoding
+    overrides["WaypipeVideoDecoding"] = waypipeVideoDecoding
+    overrides["WaypipeVideoBpf"] = waypipeVideoBpf
+    overrides["WaypipeUseSSHConfig"] = waypipeUseSSHConfig
+    overrides["WaypipeRemoteCommand"] = profile.remoteCommand
+    overrides["WaypipeDebug"] = waypipeDebug
+    overrides["WaypipeNoGpu"] = waypipeNoGpu
+    overrides["WaypipeOneshot"] = waypipeOneshot
+    overrides["WaypipeUnlinkSocket"] = waypipeUnlinkSocket
+    overrides["WaypipeLoginShell"] = waypipeLoginShell
+    overrides["WaypipeVsock"] = waypipeVsock
+    overrides["WaypipeXwls"] = waypipeXwls
+    overrides["WaypipeTitlePrefix"] = waypipeTitlePrefix
+    overrides["WaypipeSecCtx"] = waypipeSecCtx
+    overrides["SSHHost"] = profile.sshHost
+    overrides["SSHUser"] = profile.sshUser
+    overrides["SSHAuthMethod"] = profile.sshAuthMethod
+    overrides["SSHPassword"] = profile.sshPassword
+    overrides["SSHKeyPath"] = profile.sshKeyPath
+    overrides["SSHKeyPassphrase"] = profile.sshKeyPassphrase
 
     runtimeOverrides["useBundledApp"] = enableLauncher
     runtimeOverrides["bundledAppID"] = selectedClientId
     runtimeOverrides["waypipeEnabled"] = (type == kWWNMachineTypeSSHWaypipe || type == kWWNMachineTypeSSHTerminal)
+    if overrideGlobalThumbnailSetting {
+      runtimeOverrides["machineThumbnailEnabledOverride"] = machineThumbnailEnabled
+    } else {
+      runtimeOverrides.removeValue(forKey: "machineThumbnailEnabledOverride")
+    }
     runtimeOverrides["legacySettingsOverrides"] = overrides
 
     profile.settingsOverrides = overrides

@@ -144,6 +144,25 @@ pub extern "C" fn WWNCoreSetOutputSize(
     }));
 }
 
+/// Set output size and notify only the Wayland client that owns `window_id`
+/// (wl_output / xdg_output), without spamming other sessions.
+#[no_mangle]
+pub extern "C" fn WWNCoreSetOutputGeometryForWindow(
+    core: *mut WWNCore,
+    window_id: u64,
+    width: u32,
+    height: u32,
+    scale: f32,
+) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if core.is_null() {
+            return;
+        }
+        let core = unsafe { &*core };
+        core.set_output_geometry_for_window(WindowId { id: window_id }, width, height, scale);
+    }));
+}
+
 /// Set platform safe area insets (iOS notch, home indicator, etc.)
 /// These are applied as implicit exclusive zones for layer-shell positioning.
 #[no_mangle]
@@ -193,6 +212,37 @@ pub extern "C" fn WWNCoreInjectWindowResize(
         let core = unsafe { &*core };
         core.resize_window(WindowId { id: window_id }, width, height);
     }));
+}
+
+/// Ask the Wayland client to close this toplevel (`xdg_toplevel.close`).
+/// Returns `true` if a matching xdg_toplevel was found.
+#[no_mangle]
+pub extern "C" fn WWNCoreRequestWindowClose(core: *mut WWNCore, window_id: u64) -> bool {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if core.is_null() {
+            return false;
+        }
+        let core = unsafe { &*core };
+        core.request_window_close(WindowId { id: window_id })
+    })) {
+        Ok(v) => v,
+        Err(_) => false,
+    }
+}
+
+/// Remove compositor window state immediately. Returns `true` if window existed.
+#[no_mangle]
+pub extern "C" fn WWNCoreForceDestroyHostWindow(core: *mut WWNCore, window_id: u64) -> bool {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if core.is_null() {
+            return false;
+        }
+        let core = unsafe { &*core };
+        core.force_destroy_host_window(WindowId { id: window_id })
+    })) {
+        Ok(v) => v,
+        Err(_) => false,
+    }
 }
 
 /// Set window activation state (focus) and send a configure event.
@@ -284,6 +334,12 @@ pub struct CWindowEvent {
     /// Resize edge (xdg_toplevel resize_edge values)
     pub edges: u8,
     pub padding: u8,
+    /// GeometrySizeKind: 0=Frame, 1=Content, 2=Buffer
+    pub size_kind: u8,
+    /// WindowSizeCause: 0=Unknown, 1=HostConfigure, 2=ClientCommit, 3=OutputModeChange
+    pub size_cause: u8,
+    pub configure_serial: u32,
+    pub transaction_id: u64,
 }
 
 /// Pop the next pending window event
@@ -311,6 +367,10 @@ pub extern "C" fn WWNCorePopWindowEvent(core: *mut WWNCore) -> *mut CWindowEvent
                 fullscreen_shell: 0,
                 edges: 0,
                 padding: 0,
+                size_kind: 1,
+                size_cause: 0,
+                configure_serial: 0,
+                transaction_id: 0,
             });
 
             let should_return = match event {
@@ -342,11 +402,32 @@ pub extern "C" fn WWNCorePopWindowEvent(core: *mut WWNCore) -> *mut CWindowEvent
                         .unwrap_or(std::ptr::null_mut());
                     true
                 },
-                super::types::WindowEvent::SizeChanged { window_id, width, height } => {
+                super::types::WindowEvent::SizeChanged {
+                    window_id,
+                    width,
+                    height,
+                    cause,
+                    size_kind,
+                    configure_serial,
+                    transaction_id,
+                } => {
                     c_event.event_type = CWindowEventType::SizeChanged as u64;
                     c_event.window_id = window_id.id;
                     c_event.width = width;
                     c_event.height = height;
+                    c_event.size_kind = match size_kind {
+                        super::types::GeometrySizeKind::Frame => 0,
+                        super::types::GeometrySizeKind::Content => 1,
+                        super::types::GeometrySizeKind::Buffer => 2,
+                    };
+                    c_event.size_cause = match cause {
+                        super::types::WindowSizeCause::Unknown => 0,
+                        super::types::WindowSizeCause::HostConfigure => 1,
+                        super::types::WindowSizeCause::ClientCommit => 2,
+                        super::types::WindowSizeCause::OutputModeChange => 3,
+                    };
+                    c_event.configure_serial = configure_serial;
+                    c_event.transaction_id = transaction_id;
                     true
                 },
                 super::types::WindowEvent::PopupCreated { window_id, parent_id, x, y, width, height } => {
@@ -1093,6 +1174,7 @@ pub struct CRenderScene {
     pub cursor_y: f32,
     pub cursor_hotspot_x: f32,
     pub cursor_hotspot_y: f32,
+    pub cursor_surface_id: u32,
     pub cursor_buffer_id: u64,
     pub cursor_width: u32,
     pub cursor_height: u32,
@@ -1155,6 +1237,7 @@ pub extern "C" fn WWNCoreGetRenderScene(core: *mut WWNCore) -> *mut CRenderScene
             cursor_y: cursor_info.y,
             cursor_hotspot_x: cursor_info.hotspot_x,
             cursor_hotspot_y: cursor_info.hotspot_y,
+            cursor_surface_id: cursor_info.surface_id,
             cursor_buffer_id: cursor_info.buffer_id,
             cursor_width: cursor_info.width,
             cursor_height: cursor_info.height,

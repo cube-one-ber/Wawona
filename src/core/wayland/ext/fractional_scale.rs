@@ -57,9 +57,10 @@ impl Dispatch<WpFractionalScaleManagerV1, ()> for CompositorState {
                 // let data = FractionalScaleData { surface_id };
                 let fractional_scale = data_init.init(id, ());
                 
-                // Send initial preferred scale (120 = 1.0, 240 = 2.0, 180 = 1.5)
-                // Default to 1.0 scale
-                fractional_scale.preferred_scale(120);
+                // Send initial preferred scale in 1/120 units, aligned with current output scale.
+                let output_scale = _state.primary_output().scale.max(1.0);
+                let preferred = (output_scale * 120.0).round().max(120.0) as u32;
+                fractional_scale.preferred_scale(preferred);
                 
                 tracing::debug!("Created fractional scale for surface {}", surface_id);
             }

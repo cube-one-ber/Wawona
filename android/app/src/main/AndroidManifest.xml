@@ -4,6 +4,11 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Wear OS (optional): phones still install; watch devices satisfy the feature. -->
+    <uses-feature
+        android:name="android.hardware.type.watch"
+        android:required="false" />
+
     <application
         android:name=".AndroidAppMain"
         android:icon="@mipmap/ic_launcher"
@@ -25,12 +30,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity
-            android:name=".SessionActivity"
-            android:exported="false"
-            android:resizeableActivity="true"
-            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|density|screenLayout"
-            android:windowSoftInputMode="adjustResize" />
     </application>
 
 </manifest>

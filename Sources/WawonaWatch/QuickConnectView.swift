@@ -26,7 +26,7 @@ struct QuickConnectView: View {
             VStack(spacing: 14) {
                 // Identity header
                 VStack(spacing: 4) {
-                    Image(systemName: profile.type.watchSystemImage)
+                    Image(systemName: profile.type.symbolName)
                         .font(.title2)
                         .foregroundStyle(isLaunchable && isConnected ? .green : .secondary)
                     Text(profile.name)
@@ -55,7 +55,7 @@ struct QuickConnectView: View {
             .padding(.horizontal, 4)
             .padding(.bottom, 8)
         }
-        .navigationTitle(isLaunchable ? "Launch" : profile.type.watchDisplayName)
+        .navigationTitle(isLaunchable ? "Launch" : profile.type.userFacingName)
         #if !os(macOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif

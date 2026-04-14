@@ -1,4 +1,6 @@
 // swift-tools-version: 6.1
+// Dual-platform Skip Fuse app: shared SwiftUI in `Sources/*`, Android via `skip export` + Compose
+// (SkipFuseUI). Template: https://github.com/skiptools/skipapp-bookings-fuse
 import PackageDescription
 
 let package = Package(
@@ -7,7 +9,8 @@ let package = Package(
     platforms: [
         .iOS(.v17),
         .macOS(.v14),
-        .watchOS(.v10)
+        .watchOS(.v10),
+        .visionOS(.v2)
     ],
     products: [
         .library(name: "WawonaUI", type: .dynamic, targets: ["WawonaUI"]),

@@ -41,7 +41,7 @@ struct MachineEditorView: View {
                     TextField("Name", text: $name)
                     Picker("Type", selection: $type) {
                         ForEach(MachineType.allCases, id: \.self) { t in
-                            Label(t.watchDisplayName, systemImage: t.watchSystemImage).tag(t)
+                            Label(t.userFacingName, systemImage: t.symbolName).tag(t)
                         }
                     }
                     #if os(macOS)

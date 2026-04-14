@@ -1,5 +1,16 @@
 import Foundation
 import Combine
+#if os(macOS)
+import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
+
+#if os(macOS)
+typealias WWNPlatformImage = NSImage
+#elseif os(iOS)
+typealias WWNPlatformImage = UIImage
+#endif
 
 @objc enum WWNMachineTransientStatus: Int, CaseIterable {
   case disconnected
@@ -65,14 +76,36 @@ let kBundledClients: [BundledClient] = [
 
 let kNativeClientCustomId = "custom"
 
+/// Posted by `WWNWaypipeRunner` when a bundled native `NSTask` exits (quit, crash, or Stop).
+private let wwnNativeClientProcessDidTerminateNotification = Notification.Name(
+  "WWNNativeClientProcessDidTerminateNotification")
+
 @MainActor
 final class WWNMachinesViewModel: ObservableObject {
   @Published private(set) var profiles: [WWNMachineProfile] = []
   @Published private(set) var statusByMachineId: [String: WWNMachineTransientStatus] = [:]
   @Published var selectedFilter: WWNMachineFilter = .all
 
+  private var nativeProcessTerminateObserver: NSObjectProtocol?
+
   init() {
     reload()
+    nativeProcessTerminateObserver = NotificationCenter.default.addObserver(
+      forName: wwnNativeClientProcessDidTerminateNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        self?.captureThumbnailForActiveMachineIfNeeded()
+        self?.syncNativeConnectionStatusFromRunner()
+      }
+    }
+  }
+
+  deinit {
+    if let nativeProcessTerminateObserver {
+      NotificationCenter.default.removeObserver(nativeProcessTerminateObserver)
+    }
   }
 
   var activeMachineId: String? {
@@ -126,6 +159,9 @@ final class WWNMachinesViewModel: ObservableObject {
   }
 
   func delete(_ profile: WWNMachineProfile) {
+    #if os(macOS)
+    deleteThumbnail(for: profile.machineId)
+    #endif
     profiles = WWNMachineProfileStore.deleteProfile(byId: profile.machineId)
     statusByMachineId.removeValue(forKey: profile.machineId)
   }
@@ -136,34 +172,18 @@ final class WWNMachinesViewModel: ObservableObject {
 
   func connect(_ profile: WWNMachineProfile, onConnected: (() -> Void)? = nil) {
     statusByMachineId[profile.machineId] = .connecting
+
+    if profile.type == kWWNMachineTypeNative,
+       WWNWaypipeRunner.shared() == nil {
+      statusByMachineId[profile.machineId] = .error
+      return
+    }
+
     WWNPreferencesManager.shared().syncFromCanonicalWawonaPreferences()
     WWNMachineProfileStore.applyMachine(toRuntimePrefs: profile)
     WWNMachineProfileStore.setActiveMachineId(profile.machineId)
 
     if profile.type == kWWNMachineTypeNative {
-      guard let runner = WWNWaypipeRunner.shared() else {
-        statusByMachineId[profile.machineId] = .error
-        return
-      }
-      // Stop any previously running native client before starting a new one.
-      runner.stopWeston()
-      runner.stopWestonTerminal()
-      runner.stopWestonSimpleSHM()
-      runner.stopFoot()
-
-      switch selectedClientId(for: profile) ?? "" {
-      case "weston":
-        runner.launchWeston()
-      case "weston-terminal":
-        runner.launchWestonTerminal()
-      case "weston-simple-shm":
-        runner.launchWestonSimpleSHM()
-      case "foot":
-        runner.launchFoot()
-      default:
-        break
-      }
-
       statusByMachineId[profile.machineId] = .connected
       onConnected?()
       return
@@ -181,13 +201,35 @@ final class WWNMachinesViewModel: ObservableObject {
   }
 
   func disconnect(_ profile: WWNMachineProfile) {
+    captureThumbnailIfEnabled(for: profile)
+
     if profile.type == kWWNMachineTypeNative {
+      let runner = WWNWaypipeRunner.shared()
       let prefs = WWNPreferencesManager.shared()
-      prefs.setWestonEnabled(false)
-      prefs.setWestonTerminalEnabled(false)
-      prefs.setWestonSimpleSHMEnabled(false)
-      prefs.setFootEnabled(false)
-      prefs.setEnableLauncher(false)
+      switch selectedClientId(for: profile) {
+      case "weston":
+        runner?.stopWeston()
+        prefs.setWestonEnabled(false)
+      case "weston-terminal":
+        runner?.stopWestonTerminal()
+        prefs.setWestonTerminalEnabled(false)
+      case "weston-simple-shm":
+        runner?.stopWestonSimpleSHM()
+        prefs.setWestonSimpleSHMEnabled(false)
+      case "foot":
+        runner?.stopFoot()
+        prefs.setFootEnabled(false)
+      default:
+        break
+      }
+
+      let anyNativeRunning = (runner?.westonRunning == true) ||
+        (runner?.westonTerminalRunning == true) ||
+        (runner?.isWestonSimpleSHMRunning == true) ||
+        (runner?.footRunning == true)
+      if !anyNativeRunning {
+        prefs.setEnableLauncher(false)
+      }
     } else if profile.type == kWWNMachineTypeSSHWaypipe ||
                 profile.type == kWWNMachineTypeSSHTerminal {
       WWNWaypipeRunner.shared().stopWaypipe()
@@ -196,6 +238,130 @@ final class WWNMachinesViewModel: ObservableObject {
     statusByMachineId[profile.machineId] = .disconnected
     if WWNMachineProfileStore.activeMachineId() == profile.machineId {
       WWNMachineProfileStore.setActiveMachineId(nil)
+    }
+  }
+
+  #if os(macOS)
+  func focusRunningMachine(_ profile: WWNMachineProfile) {
+    guard status(for: profile.machineId) == .connected ||
+            status(for: profile.machineId) == .connecting else {
+      return
+    }
+    WWNMachineProfileStore.setActiveMachineId(profile.machineId)
+    _ = WWNCompositorBridge.shared().focusClientWindows(forMachineId: profile.machineId)
+  }
+  #else
+  func focusRunningMachine(_ profile: WWNMachineProfile) {
+    _ = profile
+  }
+  #endif
+
+  func thumbnailImage(for profile: WWNMachineProfile) -> WWNPlatformImage? {
+    #if os(macOS)
+    guard isThumbnailEnabled(for: profile) else {
+      return nil
+    }
+    return loadThumbnailImage(for: profile.machineId)
+    #else
+    _ = profile
+    return nil
+    #endif
+  }
+
+  #if os(macOS)
+  private func isThumbnailEnabled(for profile: WWNMachineProfile) -> Bool {
+    let runtimeOverrides: [String: Any] = profile.runtimeOverrides
+    if let override = runtimeOverrides["machineThumbnailEnabledOverride"] as? Bool {
+      return override
+    }
+    return WWNPreferencesManager.shared().machineSessionThumbnailsEnabled()
+  }
+
+  private func loadThumbnailImage(for machineId: String) -> NSImage? {
+    guard let storeClass = NSClassFromString("WWNMachineThumbnailStore") as? NSObject.Type else {
+      return nil
+    }
+    let selector = NSSelectorFromString("thumbnailForMachineId:")
+    guard storeClass.responds(to: selector),
+          let result = storeClass.perform(selector, with: machineId)?.takeUnretainedValue() else {
+      return nil
+    }
+    return result as? NSImage
+  }
+
+  private func captureThumbnail(for machineId: String) -> Bool {
+    guard let storeClass = NSClassFromString("WWNMachineThumbnailStore") as? NSObject.Type else {
+      return false
+    }
+    let selector = NSSelectorFromString("captureAndSaveThumbnailForMachineId:")
+    guard storeClass.responds(to: selector),
+          let result = storeClass.perform(selector, with: machineId)?.takeUnretainedValue() else {
+      return false
+    }
+    return (result as? NSNumber)?.boolValue ?? false
+  }
+
+  private func deleteThumbnail(for machineId: String) {
+    guard let storeClass = NSClassFromString("WWNMachineThumbnailStore") as? NSObject.Type else {
+      return
+    }
+    let selector = NSSelectorFromString("deleteThumbnailForMachineId:")
+    guard storeClass.responds(to: selector) else {
+      return
+    }
+    _ = storeClass.perform(selector, with: machineId)
+  }
+
+  private func captureThumbnailIfEnabled(for profile: WWNMachineProfile) {
+    guard isThumbnailEnabled(for: profile) else {
+      return
+    }
+    if captureThumbnail(for: profile.machineId) {
+      objectWillChange.send()
+    }
+  }
+
+  private func captureThumbnailForActiveMachineIfNeeded() {
+    guard let machineId = WWNMachineProfileStore.activeMachineId(),
+          let profile = profiles.first(where: { $0.machineId == machineId }) else {
+      return
+    }
+    captureThumbnailIfEnabled(for: profile)
+  }
+  #else
+  private func captureThumbnailIfEnabled(for profile: WWNMachineProfile) {
+    _ = profile
+  }
+
+  private func captureThumbnailForActiveMachineIfNeeded() {}
+  #endif
+
+  /// Aligns UI "connected" with `WWNWaypipeRunner` (e.g. user quit Weston outside Stop).
+  private func syncNativeConnectionStatusFromRunner() {
+    guard let runner = WWNWaypipeRunner.shared() else { return }
+    for profile in profiles where profile.type == kWWNMachineTypeNative {
+      guard let clientId = selectedClientId(for: profile) else { continue }
+      let running: Bool = {
+        switch clientId {
+        case "weston":
+          return runner.westonRunning
+        case "weston-terminal":
+          return runner.westonTerminalRunning
+        case "weston-simple-shm":
+          return runner.isWestonSimpleSHMRunning
+        case "foot":
+          return runner.footRunning
+        default:
+          return false
+        }
+      }()
+      let st = status(for: profile.machineId)
+      if (st == .connected || st == .connecting), !running {
+        statusByMachineId[profile.machineId] = .disconnected
+        if WWNMachineProfileStore.activeMachineId() == profile.machineId {
+          WWNMachineProfileStore.setActiveMachineId(nil)
+        }
+      }
     }
   }
 
