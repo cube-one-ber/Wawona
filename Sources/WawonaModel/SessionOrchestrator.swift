@@ -1,5 +1,5 @@
+import Combine
 import Foundation
-import Observation
 
 public struct MachineSession: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
@@ -24,29 +24,42 @@ public struct MachineSession: Identifiable, Codable, Hashable, Sendable {
 }
 
 // SKIP @bridgeMembers
-@Observable
-public final class SessionOrchestrator {
-    public private(set) var sessions: [MachineSession] = []
-    public private(set) var activeSessionId: UUID?
-    public private(set) var framePresentedCount: Int = 0
-    public private(set) var connectedClientCount: Int = 0
+@MainActor
+public final class SessionOrchestrator: ObservableObject {
+    @Published public private(set) var sessions: [MachineSession] = []
+    @Published public private(set) var activeSessionId: UUID?
+    /// Android: full-window compositor + `WawonaSurfaceView` must live in a plain `ZStack` on the
+    /// activity root. Skip’s `fullScreenCover` uses `ModalBottomSheet`, which often fails to host
+    /// SurfaceView / native clients correctly.
+    @Published public private(set) var compositorOverlaySession: MachineSession?
+    @Published public private(set) var framePresentedCount: Int = 0
+    @Published public private(set) var connectedClientCount: Int = 0
 
     public init() {}
 
     public func connect(machineId: String) -> MachineSession {
         var session = MachineSession(machineId: machineId, status: .connecting)
         session.status = .connected
-        sessions.append(session)
+        sessions = sessions + [session]
         activeSessionId = session.id
         return session
     }
 
     public func disconnect(sessionId: UUID) {
         guard let idx = sessions.firstIndex(where: { $0.id == sessionId }) else { return }
-        sessions[idx].status = .disconnected
+        var next = sessions
+        next[idx].status = .disconnected
+        sessions = next
         if activeSessionId == sessionId {
             activeSessionId = sessions.first(where: { $0.status == .connected })?.id
         }
+        if compositorOverlaySession?.id == sessionId {
+            compositorOverlaySession = nil
+        }
+    }
+
+    public func presentCompositorOverlay(session: MachineSession) {
+        compositorOverlaySession = session
     }
 
     public func openExtraWindow(sessionId: UUID) {

@@ -6,7 +6,6 @@ import WawonaModel
 struct AndroidMachineCompositorChrome: View {
     let session: MachineSession
     @ObservedObject var sessions: SessionOrchestrator
-    var onClose: () -> Void
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -15,7 +14,6 @@ struct AndroidMachineCompositorChrome: View {
             Button {
                 sessions.disconnect(sessionId: session.id)
                 NativeCompositorPrefs.clearLauncherFlags()
-                onClose()
             } label: {
                 Text("Close")
                     .font(.subheadline.weight(.semibold))
@@ -27,6 +25,7 @@ struct AndroidMachineCompositorChrome: View {
             .padding(.leading, 16)
             .padding(.top, 12)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black)
     }
 }

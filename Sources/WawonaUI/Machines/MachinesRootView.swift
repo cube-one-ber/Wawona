@@ -8,21 +8,9 @@ struct MachinesRootView: View {
     @State var search = ""
     @State var selectedMachineId: String?
     @State var showingEditor = false
-    #if SKIP && os(Android)
-    @State private var compositorSession: MachineSession?
-    #endif
 
     var body: some View {
-        #if SKIP && os(Android)
         machinesNavigation
-            .fullScreenCover(item: $compositorSession) { session in
-                AndroidMachineCompositorChrome(session: session, sessions: sessions) {
-                    compositorSession = nil
-                }
-            }
-        #else
-        machinesNavigation
-        #endif
     }
 
     private var machinesNavigation: some View {
@@ -79,7 +67,7 @@ struct MachinesRootView: View {
         #if SKIP && os(Android)
         if profile.type == .native {
             NativeCompositorPrefs.apply(for: profile)
-            compositorSession = session
+            sessions.presentCompositorOverlay(session: session)
         }
         #endif
     }

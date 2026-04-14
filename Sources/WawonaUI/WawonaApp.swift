@@ -4,20 +4,37 @@ import WawonaModel
 
 // SKIP @bridge
 public struct WawonaRootView: View {
-    @State private var preferences = WawonaPreferences.shared
-    @State private var profileStore = MachineProfileStore()
-    @State private var sessions = SessionOrchestrator()
+    @StateObject private var preferences: WawonaPreferences
+    @StateObject private var profileStore: MachineProfileStore
+    @StateObject private var sessions: SessionOrchestrator
 
-    public init() {}
+    public init() {
+        _preferences = StateObject(wrappedValue: WawonaPreferences.shared)
+        _profileStore = StateObject(wrappedValue: MachineProfileStore())
+        _sessions = StateObject(wrappedValue: SessionOrchestrator())
+    }
 
     public var body: some View {
         Group {
             if preferences.hasCompletedWelcome || !profileStore.profiles.isEmpty {
+                #if SKIP && os(Android)
+                ZStack(alignment: .topLeading) {
+                    ContentView(
+                        preferences: preferences,
+                        profileStore: profileStore,
+                        sessions: sessions
+                    )
+                    if let overlay = sessions.compositorOverlaySession {
+                        AndroidMachineCompositorChrome(session: overlay, sessions: sessions)
+                    }
+                }
+                #else
                 ContentView(
                     preferences: preferences,
                     profileStore: profileStore,
                     sessions: sessions
                 )
+                #endif
             } else {
                 WelcomeView(preferences: preferences)
             }
